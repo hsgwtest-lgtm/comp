@@ -42,6 +42,10 @@
   --silver: #cfd6ea;
   --bronze: #d6905a;
   --ground: #5b3624;
+  --earth: #a86a42;
+  --earth-hi: #d69a68;
+  --earth-dk: #5b3624;
+  --chalk: #f3dcab;
 
   --display: 'PressStart', 'NazcaDot', monospace;
   --text: 'NazcaDot', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', sans-serif;
@@ -145,6 +149,7 @@ p { margin: 0 0 8px; }
 .btn-pink { --c: var(--pink); --c-hi: var(--pink-hi); --c-dk: var(--pink-dk); --t: #330414; }
 .btn-blue { --c: var(--blue); --c-hi: var(--blue-hi); --c-dk: var(--blue-dk); --t: #08103a; }
 .btn-ghost { --c: var(--panel-hi); --c-hi: #3d3480; --c-dk: #1a1440; --t: var(--ink); }
+.btn-earth { --c: var(--earth); --c-hi: var(--earth-hi); --c-dk: var(--earth-dk); --t: #1f0e05; }
 .btn-block { display: flex; width: calc(100% - 8px); }
 .btn-xl { padding: 18px 16px 16px; flex: 1; }
 .btn-sm { font-size: 8px; padding: 10px 12px 8px; gap: 6px; }
@@ -548,4 +553,123 @@ p { margin: 0 0 8px; }
   .today-cv { width: 96px; height: 96px; }
   .today-name .jp { font-size: 24px; }
   .logo { font-size: 32px; }
+}
+
+/* ==========================================================
+   v2: 地図の回転・ガイド配置・向きの調整・EXPLORE
+   ========================================================== */
+
+/* ---------- 地図コントロール ---------- */
+.pmap-compass { display: grid; place-items: center; padding: 0; }
+.pmap-compass canvas { width: 30px; height: 30px; }
+.pmap-home {
+  position: absolute; left: 12px; bottom: 12px; z-index: 2;
+  display: grid; place-items: center;
+}
+.pmap-home .ico { width: 16px; height: auto; }
+
+/* ---------- 計測: ガイド配置パネル ---------- */
+.guide-panel {
+  position: absolute; left: 12px; right: 12px; bottom: 64px; z-index: 4;
+  margin: 0; padding: 10px 10px 4px;
+}
+.gp-info { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 12px; color: var(--dim); }
+.gp-info b { font-weight: normal; color: var(--ink); font-size: 14px; }
+.gp-title { font: 8px/1 var(--display); color: var(--pink); }
+.gp-btns { display: grid; grid-template-columns: 1fr 1fr 1fr 1.3fr; gap: 0 4px; }
+.gp-btns .btn { margin: 8px 4px 10px; padding-left: 4px; padding-right: 4px; }
+.gp-hint { font-size: 11px; color: var(--mute); text-align: center; margin: 0 0 6px; }
+
+/* ---------- 結果: 向き ---------- */
+.frame-row {
+  display: flex; align-items: center; gap: 12px;
+  margin: 16px 4px 0; padding: 8px 8px 8px 12px;
+  background: var(--panel);
+  box-shadow: 0 0 0 4px var(--line);
+}
+.frame-info { flex: 1; min-width: 0; }
+.frame-info label { display: block; font: 8px/1 var(--display); color: var(--dim); margin-bottom: 8px; }
+.frame-val { font: 16px/1 var(--display); font-weight: normal; color: var(--ink); margin-right: 10px; }
+.frame-sub { font-size: 12px; color: var(--dim); }
+.frame-row .btn { margin: 4px; }
+
+.modal-full {
+  width: min(100%, 520px);
+  height: calc(100dvh - var(--safe-t) - var(--safe-b) - 40px);
+  max-height: none;
+  display: flex; flex-direction: column;
+  padding: 16px 12px 4px;
+}
+.modal-full .modal-body { flex: 1; min-height: 0; display: flex; }
+.adjust { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.adj-map { position: relative; flex: 1; min-height: 200px; margin: 0 -4px; background: #1a1540; }
+.adj-row { display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 8px; }
+.adj-row .btn { margin: 8px 2px 12px; min-width: 52px; }
+.adj-val { font: 16px/1 var(--display); font-weight: normal; color: var(--sand); min-width: 76px; text-align: center; }
+.adj-row2 { display: flex; align-items: center; gap: 8px; }
+.adj-row2 p { flex: 1; margin: 0; }
+.adj-row2 .btn { margin: 4px; }
+
+/* ---------- EXPLORE ---------- */
+.scr-explore { height: 100dvh; min-height: 0; padding-bottom: calc(var(--safe-b) + 8px); }
+.explore-stage {
+  position: relative; flex: 1; min-height: 240px;
+  margin: 4px -16px 0;
+  background: #1a1540;
+  overflow: hidden;
+}
+.explore-stage .pmap-attr { bottom: 56px; }
+.chips { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 64px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 6px 3px;
+  font: 8px/1 var(--display); color: var(--dim);
+  background: var(--panel); box-shadow: 0 0 0 2px var(--line);
+}
+.chip .ico { width: 10px; height: auto; color: var(--chalk); }
+.chip b { font-weight: normal; color: var(--ink); }
+.chip-visit .ico { color: var(--mint); }
+.explore-tools { align-items: center; }
+.tool-radar.on { background: var(--pink); color: #330414; }
+.tool-btn.on-compass { background: var(--pink); color: #330414; }
+.signal {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 40px; padding: 0 10px;
+  background: var(--panel); box-shadow: 0 0 0 4px var(--line);
+  font: 8px/1 var(--display); color: var(--dim);
+}
+.signal .all { color: var(--gold); }
+.bars5 { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+.bars5 i { display: block; width: 4px; background: var(--mute); }
+.bars5 i:nth-child(1) { height: 4px; } .bars5 i:nth-child(2) { height: 6px; } .bars5 i:nth-child(3) { height: 8px; }
+.bars5 i:nth-child(4) { height: 11px; } .bars5 i:nth-child(5) { height: 14px; }
+.bars5.b1 i:nth-child(-n+1), .bars5.b2 i:nth-child(-n+2), .bars5.b3 i:nth-child(-n+3),
+.bars5.b4 i:nth-child(-n+4), .bars5.b5 i:nth-child(-n+5) { background: var(--chalk); }
+.bars5.b5 i { background: var(--pink); }
+
+.radar-labels { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.radar-lbl {
+  position: absolute; left: 0; top: 0;
+  padding: 3px 4px 2px;
+  font: 8px/1 var(--display); color: var(--pink);
+  background: rgba(11, 8, 32, .85);
+  white-space: nowrap;
+}
+
+.card-slot { position: absolute; left: 12px; right: 12px; bottom: 64px; z-index: 5; }
+.disc-card { margin: 0; padding: 12px 12px 4px; }
+.dc-head { font: 16px/1.2 var(--display); color: var(--gold); text-align: center; margin-bottom: 10px; animation: blink 1s steps(1) 3; }
+.dc-head.dc-visit { color: var(--mint); }
+.dc-body { display: flex; gap: 12px; align-items: flex-start; }
+.dc-body .thumb { width: 80px; height: 80px; flex: none; box-shadow: 0 0 0 4px var(--line); }
+.dc-text { min-width: 0; flex: 1; }
+.dc-title { font-size: 18px; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
+.dc-sub { font: 8px/1.6 var(--display); color: var(--sand); margin: 4px 0 6px; }
+.dc-meta { font-size: 12px; color: var(--dim); margin: 0 0 4px; line-height: 1.5; }
+.dc-meta.ok { color: var(--mint); }
+.dc-btns { display: grid; grid-template-columns: 1fr 1fr; }
+.dc-btns .btn { margin: 10px 4px 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-head { animation: none; }
 }

@@ -81,6 +81,22 @@ export class PixelBuffer {
     }
   }
 
+  /** 塗りつぶし三角形（矢印など） */
+  tri(ax, ay, bx, by, cx, cy, c) {
+    const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    if (!area) return;
+    const x0 = Math.floor(Math.min(ax, bx, cx)); const x1 = Math.ceil(Math.max(ax, bx, cx));
+    const y0 = Math.floor(Math.min(ay, by, cy)); const y1 = Math.ceil(Math.max(ay, by, cy));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5; const py = y + 0.5;
+        const w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / area;
+        const w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / area;
+        if (w0 >= 0 && w1 >= 0 && 1 - w0 - w1 >= 0) this.set(x, y, c);
+      }
+    }
+  }
+
   rect(x, y, w, h, c) {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.set(x + i, y + j, c);
   }
@@ -243,6 +259,12 @@ const ICONS = {
   guide: ['#.#.#.#', '.......', '#.....#', '.......', '#.....#', '.......', '#.#.#.#'],
   walk: ['..##..', '..##..', '.####.', '#.##.#', '..##..', '.#..#.', '#....#'],
   gps: ['.....#', '.....#', '...#.#', '...#.#', '.#.#.#', '.#.#.#', '##.#.#'],
+  rotate: ['#.####..', '##....#.', '###....#', '.......#', '#......#', '#......#', '.#....#.', '..####..'],
+  compass: ['...#...', '...#...', '..###..', '###.###', '..###..', '...#...', '...#...'],
+  radar: ['..####', '....##', '...#.#', '..#..#', '.#....', '#.....'],
+  gem: ['.###.', '#####', '.###.', '..#..'],
+  locate: ['...#...', '.#####.', '.#...#.', '##.#.##', '.#...#.', '.#####.', '...#...'],
+  heading: ['...#...', '..###..', '.#####.', '#######', '...#...', '...#...', '...#...'],
 };
 
 export function icon(name, cls = '') {

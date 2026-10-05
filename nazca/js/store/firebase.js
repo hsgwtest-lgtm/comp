@@ -38,6 +38,7 @@ export function createFirebaseStore(config) {
     status: 'connecting', // connecting | ready | error
     error: null,
     sdkFailed: false,
+    rulesOutdated: false,
 
     /** SDK 読み込み・匿名ログイン（失敗したら次の操作時に再試行） */
     connect() {
@@ -99,8 +100,31 @@ export function createFirebaseStore(config) {
       } catch { /* 確認できなくても書き込みは試す */ }
       const data = { ...post, kind, uid: api.uid, reactions: {}, createdAt: fs.serverTimestamp() };
       delete data.id;
-      await withTimeout(fs.setDoc(ref, data), 20000, 'post');
+      try {
+        await withTimeout(fs.setDoc(ref, data), 20000, 'post');
+      } catch (e) {
+        // 古い Firestore ルール（view 未対応）のままでも投稿できるよう、向き情報を外して再送
+        if (e && e.code === 'permission-denied' && 'view' in data) {
+          console.warn('Firestore rules do not accept "view" yet. Posting without it. Please update firestore.rules.');
+          api.rulesOutdated = true;
+          delete data.view;
+          await withTimeout(fs.setDoc(ref, data), 20000, 'post');
+        } else {
+          throw e;
+        }
+      }
       return ref.id;
+    },
+
+    /** EXPLORE 用: MAP MODE の作品（両コレクション） */
+    async listMapPosts(n = 500) {
+      await api.connect();
+      const q = (kind) => fs.getDocs(fs.query(fs.collection(db, COL[kind]), fs.where('publish', '==', 'map'), fs.limit(n)));
+      const [d, f] = await withTimeout(Promise.all([q('daily'), q('free')]), 20000, 'listMap');
+      return [
+        ...d.docs.map((x) => toPost(x.id, 'daily', x.data())),
+        ...f.docs.map((x) => toPost(x.id, 'free', x.data())),
+      ];
     },
 
     async listDaily(dayKey) {

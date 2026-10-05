@@ -125,6 +125,11 @@ export function createLocalStore() {
     async listFree() {
       return [...load(POSTS_KEY.free, []), ...samples()].map(withReactions);
     },
+    async listMapPosts() {
+      return [...load(POSTS_KEY.daily, []), ...load(POSTS_KEY.free, [])]
+        .filter((p) => p.publish === 'map' && p.geo && p.geo.length)
+        .map(withReactions);
+    },
     async react(kind, id, stamp, on) {
       const all = reactions();
       const r = all[id] || {};

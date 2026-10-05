@@ -1,4 +1,5 @@
 // ハッシュルーター（#/、#/track/daily、#/result、#/gallery/free ...）
+import { closeAllModals } from './ui.js';
 const routes = new Map();
 let current = null;
 let token = 0;
@@ -21,6 +22,7 @@ export async function render() {
   const my = ++token;
   const { name, params } = currentRoute();
   const screen = routes.get(name) || routes.get('');
+  closeAllModals();
   if (current && current.unmount) { try { current.unmount(); } catch (e) { console.error(e); } }
   current = null;
   const el = document.getElementById('screen');

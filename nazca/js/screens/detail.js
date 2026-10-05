@@ -87,15 +87,24 @@ export async function openDetail(post, { onChange, onDelete } = {}) {
   }
 
   const done = modal({ body, cls: 'modal-detail', actions: [{ label: 'CLOSE', value: true, cls: 'btn-ghost' }] });
+  let closed = false;
   if (isMap) {
     requestAnimationFrame(() => {
-      map = new PixelMap(art, { zoom: 16, controls: true });
+      if (closed) return;
+      // 地図にはこの作品だけを描く。作者が決めた向き・中心で表示する
       const segs = unpackGeo(post.geo);
+      const v = post.view && Number.isFinite(post.view.rot) ? post.view : null;
+      map = new PixelMap(art, { zoom: 16, controls: true, flag: false, bearing: v ? v.rot : 0 });
       map.setTrail(segs);
-      map.fitBounds(segs.flat(), 24, 18);
+      map.fitBounds(segs.flat(), 24, 19, v ? { lat: v.lat, lng: v.lng } : null);
+      const home = { center: { ...map.center }, zoom: map.zoom, bearing: map.bearing };
+      const reset = h('button', { type: 'button', class: 'pmap-btn pmap-home', 'aria-label': '作者の向きに戻す', html: icon('rotate') });
+      reset.addEventListener('click', () => { sfx.blip(); map.animateTo(home, 350); });
+      art.append(reset);
     });
   }
   await done;
+  closed = true;
   if (map) map.destroy();
   return { deleted };
 }

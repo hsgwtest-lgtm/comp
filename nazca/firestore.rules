@@ -2,7 +2,8 @@ rules_version = '2';
 
 // nazca — Cloud Firestore セキュリティルール
 // ・閲覧・投稿は匿名ログイン済みのユーザーのみ
-// ・SKETCH-ONLY 投稿は緯度経度（geo）を含められない（位置情報をサーバーに残さない）
+// ・SKETCH-ONLY 投稿は緯度経度（geo / view）を含められない（位置情報をサーバーに残さない）
+// ・view は MAP MODE の作品の表示（中心の緯度経度と向き）
 // ・投稿の編集はリアクション（reactions）の更新のみ。削除は投稿者本人のみ
 // ・文字数の上限はアプリ側（名前10字・タイトル20字）で管理し、ここでは大きめの安全上限だけを設ける
 service cloud.firestore {
@@ -22,6 +23,17 @@ service cloud.firestore {
           || (d.publish == 'map' && d.geo is list && d.geo.size() >= 1 && d.geo.size() <= 60);
     }
 
+    // 作品の表示（中心・向き）。MAP MODE のみ
+    function isValidView(d) {
+      return !d.keys().hasAny(['view'])
+          || (d.publish == 'map'
+              && d.view is map
+              && d.view.keys().hasOnly(['lat', 'lng', 'rot'])
+              && d.view.lat is number && d.view.lat >= -90 && d.view.lat <= 90
+              && d.view.lng is number && d.view.lng >= -180 && d.view.lng <= 180
+              && d.view.rot is number && d.view.rot >= -180 && d.view.rot <= 180);
+    }
+
     function isValidBase(d) {
       return d.uid == request.auth.uid
           && d.name is string && d.name.size() >= 1 && d.name.size() <= 40
@@ -30,7 +42,8 @@ service cloud.firestore {
           && d.reactions == {}
           && d.createdAt == request.time
           && isValidShape(d)
-          && isValidPublish(d);
+          && isValidPublish(d)
+          && isValidView(d);
     }
 
     function validReactionsUpdate() {
@@ -41,7 +54,7 @@ service cloud.firestore {
     match /daily_posts/{postId} {
       allow read: if signedIn();
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'v',
+        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'view', 'v',
                                                   'dayKey', 'challengeId', 'challengeName', 'score', 'reactions', 'createdAt'])
         && request.resource.data.kind == 'daily'
         && isValidBase(request.resource.data)
@@ -57,7 +70,7 @@ service cloud.firestore {
     match /free_posts/{postId} {
       allow read: if signedIn();
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'v',
+        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'view', 'v',
                                                   'title', 'reactions', 'createdAt'])
         && request.resource.data.kind == 'free'
         && isValidBase(request.resource.data)

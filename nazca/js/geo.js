@@ -92,11 +92,17 @@ export function simplifyLatLng(seg, eps) {
 
 /**
  * プライバシー用: 緯度経度を捨て、形だけを 0..1000 の整数格子に正規化する。
+ * rotDeg を渡すと、その向きに回して見た形にする（作品の向きの調整）。
  * 戻り値は [{ p: [x1, y1, x2, y2, ...] }, ...]（Firestore は配列の入れ子を持てないため）。
  */
-export function toRelativeShape(segments) {
-  const xy = segmentsToXY(segments);
+export function toRelativeShape(segments, rotDeg = 0) {
+  let xy = segmentsToXY(segments);
   if (!xy.length) return [];
+  if (rotDeg) {
+    // 地図を rotDeg 回転して見たときの形（画面 = R(-rot)・世界）
+    const a = -rotDeg * Math.PI / 180; const c = Math.cos(a); const s = Math.sin(a);
+    xy = xy.map((seg) => seg.map(([x, y]) => [x * c - y * s, x * s + y * c]));
+  }
   const bb = bboxOf(xy);
   const size = Math.max(bb.w, bb.h, 1);
   const eps = size * 0.004;
@@ -145,4 +151,45 @@ export function unpackGeo(geo) {
 export function postStrokes(post) {
   if (post.geo && post.geo.length) return segmentsToXY(unpackGeo(post.geo));
   return unpackFlat(post.shape);
+}
+
+/** 緯度経度セグメントの外接矩形の中心 */
+export function boundsCenter(segments) {
+  let minLat = Infinity; let maxLat = -Infinity; let minLng = Infinity; let maxLng = -Infinity;
+  for (const s of segments) for (const p of s) {
+    if (p.lat < minLat) minLat = p.lat; if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lng < minLng) minLng = p.lng; if (p.lng > maxLng) maxLng = p.lng;
+  }
+  if (!Number.isFinite(minLat)) return null;
+  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2, minLat, maxLat, minLng, maxLng };
+}
+
+/** 点から折れ線群までの最短距離 (m) */
+export function distToSegments(p, segments) {
+  const pr = makeProjector(p);
+  let best = Infinity;
+  for (const s of segments) {
+    let prev = null;
+    for (const q of s) {
+      const cur = pr.toXY(q);
+      if (prev) {
+        const dx = cur[0] - prev[0]; const dy = cur[1] - prev[1];
+        const L2 = dx * dx + dy * dy;
+        let t = L2 > 0 ? -(prev[0] * dx + prev[1] * dy) / L2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(prev[0] + t * dx, prev[1] + t * dy);
+        if (d < best) best = d;
+      } else if (s.length === 1) {
+        best = Math.min(best, Math.hypot(cur[0], cur[1]));
+      }
+      prev = cur;
+    }
+  }
+  return best;
+}
+
+/** 度数の表示（+23° / -7° / 0°） */
+export function fmtDeg(d) {
+  const r = Math.round(d);
+  return r > 0 ? `+${r}°` : `${r}°`;
 }

@@ -1,13 +1,13 @@
 // 2. TRACKING（計測画面）
-import { h, btn, scope, toast, modal, confirmDialog } from '../ui.js';
-import { icon, makePixelCanvas, renderLayers, PAL } from '../pixel.js';
-import { PixelMap } from '../pixelmap.js';
+import { h, btn, holdBtn, scope, toast, modal, confirmDialog } from '../ui.js';
+import { icon, makePixelCanvas, renderLayers, PAL, pack } from '../pixel.js';
+import { PixelMap, normDeg } from '../pixelmap.js';
 import { Tracker, activeTrack, finishedTrack } from '../tracker.js';
 import { navigate } from '../router.js';
 import { challengeDayKey, formatDuration } from '../time.js';
 import { getChallenge, packChallenge } from '../daily.js';
 import { normalizeTemplate } from '../score.js';
-import { segmentsToXY, makeProjector } from '../geo.js';
+import { segmentsToXY, makeProjector, totalLength, fmtDeg } from '../geo.js';
 import { sfx } from '../sfx.js';
 import { GPS } from '../config.js';
 
@@ -18,7 +18,13 @@ export function isDebug() {
   } catch { return false; }
 }
 
-const GUIDE_SIZES = [0, 200, 400, 800];
+const GUIDE_KEY = 'nazca.guide';
+const GUIDE_FRAC = 0.62;     // 配置中のお題の大きさ（画面の短辺に対する比）
+const RAD = Math.PI / 180;
+
+function fmtLen(m) {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${Math.round(m / 10) * 10}m`;
+}
 
 function gpsLevel(fix) {
   if (!fix) return { bars: 0, label: 'GPS ...', cls: 'gps-none' };
@@ -110,31 +116,107 @@ export default {
     const tools = h('div', { class: 'stage-tools' }, viewSeg, h('div', { class: 'grow' }), followBtn);
     stage.append(tools);
 
-    let guideIdx = 0;
-    let guideStrokes = null;
-    const guideBtn = h('button', { type: 'button', class: 'tool-btn tool-guide' });
-    const placeGuide = (sizeM) => {
-      if (!tpl || !sizeM) { guideStrokes = null; map.setGuide(null); return; }
-      const anchor = map.center;
-      const pr = makeProjector(anchor);
-      guideStrokes = normalizeTemplate(tpl.strokes).map((s) => s.map(([x, y]) => pr.toLatLng([x * sizeM, y * sizeM])));
+    // ---- GUIDE（お題を地図に重ねる） ----
+    // 配置中: お題が画面中央に重なる。地図を動かす＝位置、ピンチ＝大きさ、2本指回転・±1°＝向き。SET で地面に固定。
+    let guideState = 'off';          // off | placing | set
+    let guideRot = 0;                // 画面に対するお題の回転（度）
+    let guideStrokes = null;         // 固定後の緯度経度
+    let guidePlacement = null;       // 固定したときの地図表示 { center, zoom, bearing, rot }
+    const tplNorm = tpl ? normalizeTemplate(tpl.strokes) : null;
+    const tplLen = tplNorm ? totalLength(tplNorm) : 0;
+    const C_GUIDE = pack(PAL.pink); const C_RET = pack(PAL.ink);
+    const guideBtn = h('button', { type: 'button', class: 'tool-btn tool-guide', html: `${icon('guide')} GUIDE` });
+    const gpSize = h('b', {}); const gpLen = h('span', {}); const gpRot = h('span', {});
+    const guidePanel = h('div', { class: 'guide-panel frame hidden' },
+      h('div', { class: 'gp-info' }, h('span', { class: 'gp-title' }, 'GUIDE'), gpSize, gpLen, gpRot),
+      h('div', { class: 'gp-btns' },
+        holdBtn('-1°', () => { guideRot = normDeg(guideRot - 1); map.requestRender(); }, 'btn-sm btn-ghost', { 'aria-label': '左に1°回す' }),
+        holdBtn('+1°', () => { guideRot = normDeg(guideRot + 1); map.requestRender(); }, 'btn-sm btn-ghost', { 'aria-label': '右に1°回す' }),
+        btn('OFF', () => guideOff(), 'btn-sm btn-ghost'),
+        btn('SET', () => guideSet(), 'btn-sm btn-pink')),
+      h('p', { class: 'gp-hint' }, '地図を動かして位置、ピンチで大きさ、2本指で向き'));
+
+    const guideScreenPts = () => {
+      const S = Math.min(map.cssW, map.cssH) * GUIDE_FRAC;
+      const c = Math.cos(guideRot * RAD); const sn = Math.sin(guideRot * RAD);
+      const cx = map.cssW / 2; const cy = map.cssH / 2;
+      return tplNorm.map((st) => st.map(([x, y]) => [cx + (x * c - y * sn) * S, cy + (x * sn + y * c) * S]));
+    };
+    const updateGuidePanel = () => {
+      if (guideState !== 'placing') return;
+      const sizeM = Math.min(map.cssW, map.cssH) * GUIDE_FRAC * map.metersPerPixel();
+      gpSize.textContent = `大きさ ${fmtLen(sizeM)}`;
+      gpLen.textContent = `1周 約${fmtLen(tplLen * sizeM)}`;
+      gpRot.textContent = `向き ${fmtDeg(normDeg(map.bearing + guideRot))}`;
+    };
+    const saveGuide = () => {
+      try {
+        if (guideState === 'set') localStorage.setItem(GUIDE_KEY, JSON.stringify({ startedAt: tracker.startedAt || 0, strokes: guideStrokes, placement: guidePlacement }));
+        else localStorage.removeItem(GUIDE_KEY);
+      } catch { /* noop */ }
+    };
+    const showGuideState = () => {
+      guidePanel.classList.toggle('hidden', guideState !== 'placing');
+      guideBtn.classList.toggle('on', guideState !== 'off');
+      guideBtn.innerHTML = `${icon('guide')} ${guideState === 'set' ? 'MOVE' : 'GUIDE'}`;
+      updateGuidePanel();
+      map.requestRender();
+    };
+    const guidePlace = () => {
+      map.follow = false;
+      if (guideState === 'set' && guidePlacement) {
+        guideRot = guidePlacement.rot;
+        map.animateTo({ center: guidePlacement.center, zoom: guidePlacement.zoom, bearing: guidePlacement.bearing }, 350);
+      }
+      guideState = 'placing';
+      map.setGuide(null);
+      showGuideState();
+    };
+    const guideSet = () => {
+      guideStrokes = guideScreenPts().map((st) => st.map(([x, y]) => map.toLatLng(x, y)));
+      guidePlacement = { center: { ...map.center }, zoom: map.zoom, bearing: map.bearing, rot: guideRot };
+      guideState = 'set';
       map.setGuide(guideStrokes);
+      saveGuide();
+      showGuideState();
+      sfx.select();
     };
-    const showGuideLabel = () => {
-      const s = GUIDE_SIZES[guideIdx];
-      guideBtn.innerHTML = `${icon('guide')} ${s ? `${s}m` : 'GUIDE'}`;
-      guideBtn.classList.toggle('on', !!s);
+    const guideOff = () => {
+      guideState = 'off'; guideStrokes = null; guidePlacement = null;
+      map.setGuide(null);
+      saveGuide();
+      showGuideState();
     };
+    map.onDrawOverlay = (buf) => {
+      if (guideState !== 'placing' || !tplNorm) return;
+      const k = map.scale;
+      for (const st of guideScreenPts()) buf.polyline(st.map(([x, y]) => [x / k, y / k]), C_GUIDE, 1, [3, 2]);
+      const cx = Math.round(map.cssW / 2 / k); const cy = Math.round(map.cssH / 2 / k);
+      buf.line(cx - 5, cy, cx - 2, cy, C_RET); buf.line(cx + 2, cy, cx + 5, cy, C_RET);
+      buf.line(cx, cy - 5, cx, cy - 2, C_RET); buf.line(cx, cy + 2, cx, cy + 5, C_RET);
+    };
+    map.onViewChange = updateGuidePanel;
+
     if (tpl) {
       guideBtn.addEventListener('click', () => {
         sfx.blip();
-        guideIdx = (guideIdx + 1) % GUIDE_SIZES.length;
-        placeGuide(GUIDE_SIZES[guideIdx]);
-        showGuideLabel();
-        if (GUIDE_SIZES[guideIdx] && guideIdx === 1) toast('地図の中心にお題を重ねました（タップで大きさ変更）');
+        if (guideState === 'placing') guideSet(); else guidePlace();
       });
-      showGuideLabel();
       tools.insertBefore(guideBtn, followBtn);
+      stage.append(guidePanel);
+      // 計測を再開した場合は前回のガイドを戻す
+      if (snap) {
+        try {
+          const g = JSON.parse(localStorage.getItem(GUIDE_KEY) || 'null');
+          if (g && g.strokes && g.startedAt === (snap.startedAt || 0)) {
+            guideStrokes = g.strokes; guidePlacement = g.placement; guideState = 'set';
+            map.setGuide(guideStrokes);
+          }
+        } catch { /* noop */ }
+      } else {
+        try { localStorage.removeItem(GUIDE_KEY); } catch { /* noop */ }
+      }
+      showGuideState();
 
       const odaiCv = makePixelCanvas(36, 36, 'odai-cv');
       renderLayers(odaiCv, [{ strokes: tpl.strokes, color: PAL.pink, thick: 1 }], { pad: 3 });
@@ -147,7 +229,7 @@ export default {
           title: `ODAI: ${tpl.name}`,
           body: h('div', { class: 'center' }, big,
             h('p', {}, `「${tpl.ja}」の形になるように歩こう。`),
-            h('p', { class: 'muted' }, 'GUIDE ボタンで地図の中心にお題を重ねられます。場所・大きさ・向き（±45°）は自由。一筆書きできない線は PAUSE で移動しよう。')),
+            h('p', { class: 'muted' }, 'GUIDE でお題を地図に重ね、地図を動かして位置・大きさ・向きを決めて SET。採点では場所・大きさ・向き（±45°）は自由です。一筆書きできない線は PAUSE で移動しよう。')),
         });
       });
       stage.append(odai);
@@ -209,7 +291,9 @@ export default {
         navigate('track/daily', { replace: true });
         return;
       }
+      if (guideState === 'placing') guideSet(); // 配置途中のガイドは、その場で固定してから歩き始める
       tracker.start();
+      saveGuide();
       sfx.start();
       if (!tracker.freshFix()) toast('GPS を探しています…見つかり次第記録します');
     };
@@ -226,6 +310,7 @@ export default {
         return;
       }
       finishedTrack.save(result);
+      try { localStorage.removeItem(GUIDE_KEY); } catch { /* noop */ }
       sfx.finish();
       navigate('result');
     };
@@ -246,7 +331,9 @@ export default {
       if (v === 'exit') { tracker.persist(); navigate(''); return; }
       if (v === 'discard') {
         if (await confirmDialog('DISCARD?', 'この計測データを削除します。よろしいですか？', 'DELETE', 'CANCEL')) {
-          tracker.dispose(); activeTrack.clear(); tracker.state = 'idle'; navigate(''); return;
+          tracker.dispose(); activeTrack.clear(); tracker.state = 'idle';
+          try { localStorage.removeItem(GUIDE_KEY); } catch { /* noop */ }
+          navigate(''); return;
         }
       }
       if (wasTracking) tracker.resume();
@@ -301,8 +388,8 @@ export default {
       }, 'btn-sm btn-ghost');
       const autoBtn = btn('AUTO WALK', () => {
         if (stopSim) { stopSim(); stopSim = null; autoBtn.textContent = 'AUTO WALK'; return; }
+        if (tpl && guideState !== 'set') guideSet();
         let strokes = guideStrokes;
-        if (!strokes && tpl) { guideIdx = 2; placeGuide(GUIDE_SIZES[guideIdx]); showGuideLabel(); strokes = guideStrokes; }
         if (!strokes) {
           const pr = makeProjector(map.center);
           const ring = [];

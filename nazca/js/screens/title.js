@@ -141,6 +141,7 @@ export default {
     menu.append(
       btn(`${icon('star')} DAILY CHALLENGE`, () => startMode('daily'), 'btn-block'),
       btn(`${icon('pencil')} FREE DOODLE`, () => startMode('free'), 'btn-block btn-blue'),
+      btn(`${icon('compass')} EXPLORE`, () => { sfx.select(); navigate('explore'); }, 'btn-block btn-earth'),
       btn(`${icon('trophy')} GALLERY &amp; RANKING`, () => { sfx.select(); navigate('gallery/daily'); }, 'btn-block btn-ghost'),
     );
 

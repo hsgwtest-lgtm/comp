@@ -1,12 +1,12 @@
 // 3. RESULT & POST（結果・投稿画面）
-import { h, btn, scope, toast, modal, confirmDialog, askName } from '../ui.js';
-import { icon, makePixelCanvas, renderLayers, PAL } from '../pixel.js';
-import { PixelMap } from '../pixelmap.js';
+import { h, btn, holdBtn, scope, toast, modal, confirmDialog, askName } from '../ui.js';
+import { icon, makePixelCanvas, renderLayers, PAL, pack } from '../pixel.js';
+import { PixelMap, normDeg } from '../pixelmap.js';
 import { finishedTrack } from '../tracker.js';
 import { navigate } from '../router.js';
 import { formatDuration, dayKeyShort, challengeDayKey } from '../time.js';
 import { scoreTrack, scoreLabel } from '../score.js';
-import { segmentsToXY, toRelativeShape, toGeoShape, unpackFlat } from '../geo.js';
+import { segmentsToXY, toRelativeShape, toGeoShape, unpackFlat, boundsCenter, fmtDeg } from '../geo.js';
 import { templateById } from '../challenges.js';
 import { getName, setName, store } from '../store/index.js';
 import { sfx } from '../sfx.js';
@@ -29,6 +29,12 @@ export default {
     let result = null;
     let busy = false;
     const disposers = [];
+    // 作品の向きと中心（完成後に調整できる）。rot = 画面の上が北から何度か（地図の回転）
+    const bc = boundsCenter(f.segments);
+    const autoCenter = { lat: bc.lat, lng: bc.lng };
+    let autoRot = 0;
+    const frame = { rot: 0, center: null, touched: false };
+    const allPts = f.segments.flat();
 
     // ---- アート ----
     const artCv = makePixelCanvas(96, 96, 'result-cv');
@@ -72,9 +78,19 @@ export default {
 
     // ---- 公開モード ----
     const sketchPrev = makePixelCanvas(48, 48, 'opt-cv');
-    renderLayers(sketchPrev, [{ strokes: unpackFlat(toRelativeShape(f.segments)), color: PAL.mint }], { pad: 3 });
     const mapPrev = h('div', { class: 'opt-map' });
     let miniMap = null;
+    const frameVal = h('b', { class: 'frame-val' });
+    const frameSub = h('span', { class: 'frame-sub' });
+    const updateFrame = () => {
+      renderLayers(sketchPrev, [{ strokes: unpackFlat(toRelativeShape(f.segments, frame.rot)), color: PAL.mint }], { pad: 3 });
+      if (miniMap) {
+        miniMap.bearing = frame.rot;
+        miniMap.fitBounds(allPts, 8, 18, frame.center);
+      }
+      frameVal.textContent = fmtDeg(frame.rot);
+      frameSub.textContent = frame.center ? '中心: 指定' : '中心: 自動';
+    };
     const opts = {};
     const mkOpt = (id, title, desc, preview) => {
       const o = h('button', { type: 'button', class: 'pub-opt', role: 'radio', 'aria-checked': 'false' },
@@ -98,8 +114,12 @@ export default {
       h('div', { class: 'pub-opts', role: 'radiogroup' },
         mkOpt('map', `${icon('map')} MAP MODE`, 'レトロ地図の上に軌跡を重ねて公開', mapPrev),
         mkOpt('sketch', `${icon('sketch')} SKETCH-ONLY`, '地図なし・線だけ。位置情報は破棄', sketchPrev)),
+      h('div', { class: 'frame-row' },
+        h('div', { class: 'frame-info' }, h('label', {}, 'ORIENTATION'), h('div', {}, frameVal, frameSub)),
+        btn(`${icon('rotate')} ADJUST`, () => openAdjust(), 'btn-sm btn-ghost')),
       privacyNote);
     setPublish('sketch');
+    updateFrame();
 
     // ---- ボタン ----
     const postBtn = btn(`${icon('flag')} POST`, () => doPost(), 'btn-pink btn-xl btn-block');
@@ -134,9 +154,9 @@ export default {
     let disposed = false;
     requestAnimationFrame(() => {
       if (disposed) return;
-      miniMap = new PixelMap(mapPrev, { zoom: 16, interactive: false, controls: false });
+      miniMap = new PixelMap(mapPrev, { zoom: 16, interactive: false, controls: false, flag: false });
       miniMap.setTrail(f.segments);
-      miniMap.fitBounds(f.segments.flat(), 8, 18);
+      updateFrame();
       disposers.push(() => miniMap.destroy());
     });
 
@@ -144,6 +164,9 @@ export default {
     if (kind === 'daily') {
       setTimeout(() => {
         result = scoreTrack(tpl.strokes, xy);
+        // お題に合わせて作品を正立させる向きを初期値にする
+        autoRot = Math.round(normDeg(-result.rotation));
+        if (!frame.touched) { frame.rot = autoRot; updateFrame(); }
         renderLayers(artCv, [
           { strokes: result.templateNorm, color: PAL.pink, thick: 1, dash: [2, 1] },
           { strokes: result.trailNorm, color: PAL.mint, thick: 1 },
@@ -172,6 +195,64 @@ export default {
       }, 120);
     }
 
+    // ---- 向き・中心の調整 ----
+    const clampCenter = (c) => ({
+      lat: Math.min(bc.maxLat, Math.max(bc.minLat, c.lat)),
+      lng: Math.min(bc.maxLng, Math.max(bc.minLng, c.lng)),
+    });
+    const openAdjust = async () => {
+      const wrap = h('div', { class: 'adj-map' });
+      const val = h('b', { class: 'adj-val' }, fmtDeg(frame.rot));
+      let m = null;
+      const rotBy = (d) => { if (m) m.setBearing(Math.round(m.bearing) + d); };
+      const body = h('div', { class: 'adjust' },
+        wrap,
+        h('div', { class: 'adj-row' },
+          holdBtn('-15', () => rotBy(-15), 'btn-sm btn-ghost', { 'aria-label': '左に15°' }),
+          holdBtn('-1°', () => rotBy(-1), 'btn-sm btn-ghost', { 'aria-label': '左に1°' }),
+          val,
+          holdBtn('+1°', () => rotBy(1), 'btn-sm btn-ghost', { 'aria-label': '右に1°' }),
+          holdBtn('+15', () => rotBy(15), 'btn-sm btn-ghost', { 'aria-label': '右に15°' })),
+        h('div', { class: 'adj-row2' },
+          h('p', { class: 'muted small' }, '地図を動かして中心（＋）、2本指かボタンで向きを調整'),
+          btn('AUTO', () => {
+            if (!m) return;
+            m.bearing = autoRot;
+            m.fitBounds(allPts, 36, 19);
+            m.animateTo({ center: autoCenter, bearing: autoRot }, 250);
+          }, 'btn-sm btn-ghost')));
+      const done = modal({
+        title: 'ADJUST',
+        body,
+        cls: 'modal-full',
+        dismissible: false,
+        actions: [{ label: 'CANCEL', value: null, cls: 'btn-ghost' }, { label: 'OK', value: 'ok' }],
+      });
+      const C_RET = pack(PAL.ink); const C_DOT = pack(PAL.pink);
+      requestAnimationFrame(() => {
+        m = new PixelMap(wrap, { zoom: 16, bearing: frame.rot, snapNorth: false, flag: false });
+        m.setTrail(f.segments);
+        m.fitBounds(allPts, 36, 19, frame.center || autoCenter);
+        m.onDrawOverlay = (buf) => {
+          const cx = Math.round(buf.w / 2); const cy = Math.round(buf.h / 2);
+          buf.line(cx - 7, cy, cx - 3, cy, C_RET); buf.line(cx + 3, cy, cx + 7, cy, C_RET);
+          buf.line(cx, cy - 7, cx, cy - 3, C_RET); buf.line(cx, cy + 3, cx, cy + 7, C_RET);
+          buf.dot(cx, cy, C_DOT, 1);
+        };
+        m.onViewChange = () => { val.textContent = fmtDeg(m.bearing); };
+      });
+      const v = await done;
+      if (v === 'ok' && m) {
+        frame.rot = Math.round(normDeg(m.bearing));
+        const c = clampCenter(m.center);
+        const near = Math.abs(c.lat - autoCenter.lat) < 1e-6 && Math.abs(c.lng - autoCenter.lng) < 1e-6;
+        frame.center = near ? null : c;
+        frame.touched = true;
+        updateFrame();
+      }
+      if (m) m.destroy();
+    };
+
     // ---- 投稿 ----
     const doPost = async () => {
       if (busy) return;
@@ -190,7 +271,7 @@ export default {
       const s = store();
       // ストローク数の上限（PAUSE を極端に多用した場合）
       const cap = (arr) => (arr.length <= 60 ? arr : arr.slice().sort((a, b) => b.p.length - a.p.length).slice(0, 60));
-      const shape = cap(toRelativeShape(f.segments));
+      const shape = cap(toRelativeShape(f.segments, frame.rot));
       if (!shape.length) { sfx.error(); toast('線が短すぎて投稿できません'); return; }
       const post = {
         name,
@@ -200,7 +281,11 @@ export default {
         shape,
         v: 1,
       };
-      if (publish === 'map') post.geo = cap(toGeoShape(f.segments));
+      if (publish === 'map') {
+        post.geo = cap(toGeoShape(f.segments));
+        const c = frame.center || autoCenter;
+        post.view = { lat: Math.round(c.lat * 1e5) / 1e5, lng: Math.round(c.lng * 1e5) / 1e5, rot: frame.rot };
+      }
       if (kind === 'daily') Object.assign(post, { dayKey: f.dayKey, challengeId: tpl.id, challengeName: tpl.ja, score: result.score });
       else post.title = titleInput.value.trim().slice(0, TITLE_MAX) || 'UNTITLED';
 
@@ -214,7 +299,7 @@ export default {
         finishedTrack.clear();
         try { sessionStorage.setItem('nazca.highlight', id); } catch { /* noop */ }
         sfx.coin();
-        toast('POSTED!');
+        toast(s.rulesOutdated ? 'POSTED!（向きの保存には Firestore ルールの更新が必要です）' : 'POSTED!', s.rulesOutdated ? 4200 : 2400);
         navigate(kind === 'daily' ? `gallery/daily/${f.dayKey}` : 'gallery/free');
       } catch (e) {
         console.error(e);

@@ -27,6 +27,25 @@ export function btn(label, onClick, cls = '', attrs = {}) {
   return h('button', { type: 'button', class: `btn ${cls}`.trim(), html: label, ...attrs, onclick: (e) => { sfx.blip(); onClick && onClick(e); } });
 }
 
+/** 押し続けると連続で反応するボタン（±1° の調整など） */
+export function holdBtn(label, fn, cls = '', attrs = {}) {
+  const b = h('button', { type: 'button', class: `btn ${cls}`.trim(), html: label, ...attrs });
+  let t1 = 0; let t2 = 0;
+  const stop = () => { clearTimeout(t1); clearInterval(t2); t1 = 0; t2 = 0; };
+  b.addEventListener('pointerdown', (e) => {
+    if (e.button && e.button !== 0) return;
+    e.preventDefault();
+    stop();
+    sfx.blip();
+    fn();
+    t1 = setTimeout(() => { t2 = setInterval(fn, 70); }, 400);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'blur']) b.addEventListener(ev, stop);
+  // キーボード操作（Enter / Space）
+  b.addEventListener('click', (e) => { if (e.detail === 0) { sfx.blip(); fn(); } });
+  return b;
+}
+
 let toastTimer = 0;
 export function toast(msg, ms = 2400) {
   const root = document.getElementById('toast-root');
@@ -38,6 +57,13 @@ export function toast(msg, ms = 2400) {
 /**
  * モーダル。actions: [{ label, value, cls }]。戻り値は押されたボタンの value（閉じたら null）。
  */
+const openModals = new Set();
+
+/** 開いているモーダルをすべて閉じる（画面遷移時） */
+export function closeAllModals() {
+  for (const close of [...openModals]) close(null);
+}
+
 export function modal({ title, body, actions = [{ label: 'OK', value: true }], dismissible = true, cls = '' }) {
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');
@@ -47,7 +73,8 @@ export function modal({ title, body, actions = [{ label: 'OK', value: true }], d
     const bodyEl = h('div', { class: 'modal-body' });
     if (typeof body === 'string') bodyEl.innerHTML = body; else if (body) bodyEl.append(body);
     box.append(bodyEl);
-    const close = (v) => { back.remove(); resolve(v); };
+    const close = (v) => { openModals.delete(close); back.remove(); resolve(v); };
+    openModals.add(close);
     if (actions.length) {
       const row = h('div', { class: 'modal-actions' });
       for (const a of actions) {
@@ -111,6 +138,12 @@ export function showHelp() {
         <p>毎日 <b>16:00</b> に新しいお題（ドット絵）が出ます。お題の形になるように歩いて、形の近さ <b>0.0〜100.0%</b> を競います。歩く場所・大きさ・向き（±45°まで）は自由です。</p>
         <h3>${icon('pencil')} FREE DOODLE</h3>
         <p>お題なしで、好きな絵や文字を歩いて描いてギャラリーに投稿できます。</p>
+        <h3>${icon('guide')} GUIDE と地図の操作</h3>
+        <p>地図は 2 本指で回転・ピンチで拡大できます。GUIDE でお題を画面に重ね、地図を動かして位置・大きさ・向きを決めて SET。歩くルートの下書きになります。</p>
+        <h3>${icon('rotate')} 完成したら向きを調整</h3>
+        <p>結果画面の ADJUST で、作品の中心と向き（1° 単位）を決めてから投稿できます。</p>
+        <h3>${icon('compass')} EXPLORE</h3>
+        <p>MAP MODE の作品が地上絵として地図のどこかに眠っています。地図を探索して見つけたり、実際に歩いて訪れたりしよう。</p>
         <h3>${icon('pause')} PAUSE のコツ</h3>
         <p>PAUSE 中の移動は線になりません。一筆書きできない絵（目や窓など）は、PAUSE して次の線のスタート地点まで移動してから RESUME しましょう。</p>
         <h3>${icon('gps')} 計測中は画面をつけたまま</h3>
