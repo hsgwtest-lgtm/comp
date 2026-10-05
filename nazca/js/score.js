@@ -3,8 +3,9 @@
 // 手順
 //  1. お題と軌跡をそれぞれ弧長で等間隔に再サンプリング
 //  2. お題は外接矩形で [-0.5, 0.5] に正規化
-//  3. 軌跡は回転（±45°）・拡大縮小・平行移動を最適化してお題に重ねる
-//     （歩く場所・大きさ・街路の向きは自由。鏡像は不可）
+//  3. 軌跡の向き（回転）を決め、拡大縮小・平行移動を最適化してお題に重ねる
+//     ・向きは採点前にプレイヤーが合わせられる（MATCH）。初期値は 360° 探索で最もよく重なる向き
+//     ・歩く場所・大きさは自由。鏡像は不可
 //  4. 双方向の平均距離 D = (お題→軌跡 + 軌跡→お題) / 2 を求める
 //     ・お題→軌跡 が大きい … 描き残し
 //     ・軌跡→お題 が大きい … はみ出し・余計な線
@@ -13,10 +14,18 @@ import { bboxOf, totalLength, simplify } from './geo.js';
 
 const T_SAMPLES = 160;   // お題側のサンプル数
 const W_SAMPLES = 240;   // 軌跡側のサンプル数
-const MAX_ROT = 45;      // 回転の探索範囲（度）
+const COARSE_STEP = 5;   // 自動探索の粗い角度刻み（度）
 const D50 = 0.04;        // D がこの値でスコア 50%
 const P = 3;
 const COVER_TOL = 0.06;  // 「なぞれた」とみなす距離（正規化単位）
+const RAD = Math.PI / 180;
+
+/** 角度（度）を -180 < d <= 180 に */
+export function wrapDeg(d) {
+  let x = ((d + 180) % 360 + 360) % 360 - 180;
+  if (x === -180) x = 180;
+  return x;
+}
 
 /** 弧長で等間隔に点を打つ */
 export function resampleStrokes(strokes, n) {
@@ -113,18 +122,20 @@ export function distanceToScore(D) {
 }
 
 /**
+ * 採点の準備。軌跡を正規化しておき、向きを変えながら何度でも重ね直せるようにする。
  * @param templateStrokes [[[x,y],...],...] お題（画面座標）
  * @param trailStrokes    [[[x,y],...],...] 軌跡（m, x: 東, y: 南）
+ * @returns matcher（軌跡が短すぎるときは null）
+ *   fit = { deg, s, tx, ty, D }  deg は軌跡を回す角度（度・画面上で時計回りが正）
  */
-export function scoreTrack(templateStrokes, trailStrokes) {
+export function prepareMatch(templateStrokes, trailStrokes) {
   const tNorm = normalizeTemplate(templateStrokes);
-  const empty = { score: 0, D: Infinity, coverage: 0, templateNorm: tNorm, trailNorm: [], rotation: 0 };
   const strokes = trailStrokes.filter((s) => s.length >= 2);
-  if (!strokes.length) return empty;
+  if (!strokes.length) return null;
   const bb0 = bboxOf(strokes);
   const size0 = Math.max(bb0.w, bb0.h);
   const len = totalLength(strokes);
-  if (!(size0 > 0) || !(len > 0)) return empty;
+  if (!(size0 > 0) || !(len > 0)) return null;
 
   // 軌跡を重心中心・単位スケールに（数値安定のため）
   let cx = 0; let cy = 0; let n = 0;
@@ -142,7 +153,8 @@ export function scoreTrack(templateStrokes, trailStrokes) {
   const dT = new Float64Array(T.length >> 1);
   const dW = new Float64Array(W.length >> 1);
 
-  const evalD = (th, s, tx, ty) => {
+  const evalD = (deg, s, tx, ty) => {
+    const th = deg * RAD;
     const c = Math.cos(th); const sn = Math.sin(th);
     transformInto(W, Wt, c, sn, s, tx, ty);
     transformInto(WS, WSt, c, sn, s, tx, ty);
@@ -151,10 +163,9 @@ export function scoreTrack(templateStrokes, trailStrokes) {
     return (a + b) / 2;
   };
 
-  // 粗い回転探索（各角度で外接矩形を合わせる）
-  const cands = [];
-  for (let deg = -MAX_ROT; deg <= MAX_ROT; deg += 3) {
-    const th = deg * Math.PI / 180;
+  // その向きで外接矩形をお題に合わせた初期値
+  const boxFit = (deg) => {
+    const th = deg * RAD;
     const c = Math.cos(th); const sn = Math.sin(th);
     let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
     for (let i = 0; i < W.length; i += 2) {
@@ -164,53 +175,105 @@ export function scoreTrack(templateStrokes, trailStrokes) {
     }
     const s = 1 / (Math.max(maxX - minX, maxY - minY) || 1);
     const tx = -s * (minX + maxX) / 2; const ty = -s * (minY + maxY) / 2;
-    cands.push({ th, s, tx, ty, D: evalD(th, s, tx, ty) });
-  }
-  cands.sort((a, b) => a.D - b.D);
+    return { deg, s, tx, ty, D: evalD(deg, s, tx, ty) };
+  };
 
-  // 上位候補をパターンサーチで微調整（回転・拡縮・平行移動）
-  const lim = (MAX_ROT + 5) * Math.PI / 180;
-  let best = cands[0];
-  for (const c0 of cands.slice(0, 3)) {
-    let cur = { ...c0 };
-    let dTh = 2 * Math.PI / 180; let dS = 0.08; let dT2 = 0.05;
-    for (let it = 0; it < 60 && dT2 > 0.002; it++) {
+  // パターンサーチ（rotate=false なら向きは固定して拡縮・平行移動だけ）
+  const refine = (start, rotate) => {
+    let cur = { ...start };
+    let dDeg = 2; let dS = 0.08; let dT2 = 0.05;
+    for (let it = 0; it < 70 && dT2 > 0.0015; it++) {
       let improved = false;
-      const trials = [
-        [dTh, 0, 0, 0], [-dTh, 0, 0, 0],
-        [0, dS, 0, 0], [0, -dS, 0, 0],
-        [0, 0, dT2, 0], [0, 0, -dT2, 0],
-        [0, 0, 0, dT2], [0, 0, 0, -dT2],
-      ];
+      const trials = rotate
+        ? [[dDeg, 0, 0, 0], [-dDeg, 0, 0, 0], [0, dS, 0, 0], [0, -dS, 0, 0], [0, 0, dT2, 0], [0, 0, -dT2, 0], [0, 0, 0, dT2], [0, 0, 0, -dT2]]
+        : [[0, dS, 0, 0], [0, -dS, 0, 0], [0, 0, dT2, 0], [0, 0, -dT2, 0], [0, 0, 0, dT2], [0, 0, 0, -dT2]];
       for (const [a, b, c, d] of trials) {
-        const th = cur.th + a;
-        if (Math.abs(th) > lim) continue;
+        const deg = cur.deg + a;
         const s = cur.s * (1 + b);
         const tx = cur.tx + c; const ty = cur.ty + d;
-        const D = evalD(th, s, tx, ty);
-        if (D < cur.D - 1e-9) { cur = { th, s, tx, ty, D }; improved = true; }
+        const D = evalD(deg, s, tx, ty);
+        if (D < cur.D - 1e-9) { cur = { deg, s, tx, ty, D }; improved = true; }
       }
-      if (!improved) { dTh /= 2; dS /= 2; dT2 /= 2; }
+      if (!improved) { dDeg /= 2; dS /= 2; dT2 /= 2; }
     }
-    if (cur.D < best.D) best = cur;
-  }
-
-  // 結果
-  evalD(best.th, best.s, best.tx, best.ty);
-  let cov = 0;
-  for (let i = 0; i < dT.length; i++) if (dT[i] <= COVER_TOL) cov++;
-  const c = Math.cos(best.th); const sn = Math.sin(best.th);
-  const trailNorm = unit.map((s) => s.map(([x, y]) => [
-    best.s * (c * x - sn * y) + best.tx,
-    best.s * (sn * x + c * y) + best.ty,
-  ]));
-  const score = Math.round(distanceToScore(best.D) * 10) / 10;
-  return {
-    score: Math.min(100, Math.max(0, score)),
-    D: best.D,
-    coverage: cov / dT.length,
-    templateNorm: tNorm,
-    trailNorm,
-    rotation: best.th * 180 / Math.PI,
+    cur.deg = wrapDeg(cur.deg);
+    return cur;
   };
+
+  return {
+    templateNorm: tNorm,
+
+    /** その重ね方の距離 D（軽い。ドラッグ中のプレビュー用） */
+    measure(fit) { return evalD(fit.deg, fit.s, fit.tx, fit.ty); },
+
+    /** 向きを deg に固定して、拡縮・平行移動だけ最適化する（MATCH で使う） */
+    fitAt(deg, warm = null) {
+      let f = refine(boxFit(deg), false);
+      if (warm) {
+        const w = refine({ deg, s: warm.s, tx: warm.tx, ty: warm.ty, D: evalD(deg, warm.s, warm.tx, warm.ty) }, false);
+        if (w.D < f.D) f = w;
+      }
+      f.deg = deg;
+      return f;
+    },
+
+    /**
+     * いちばんよく重なる向きを探す。
+     * center±range（度）を粗く調べてから上位を微調整。prior は必ず候補に入れる角度（ガイドの向きなど）。
+     */
+    best({ center = 0, range = 180, prior = [] } = {}) {
+      const cands = [];
+      const full = range >= 180;
+      const from = full ? -180 : center - range;
+      const to = full ? 180 - COARSE_STEP : center + range;
+      for (let deg = from; deg <= to + 1e-9; deg += COARSE_STEP) cands.push(boxFit(deg));
+      for (const p of prior) if (Number.isFinite(p)) cands.push(boxFit(p));
+      cands.sort((a, b) => a.D - b.D);
+      let bestFit = cands[0];
+      const lim = full ? Infinity : range + 5;
+      for (const c0 of cands.slice(0, 4)) {
+        let f = refine(c0, true);
+        if (!full && Math.abs(wrapDeg(f.deg - center)) > lim) f = refine(c0, false);
+        if (f.D < bestFit.D) bestFit = f;
+      }
+      return bestFit;
+    },
+
+    /** fit を描画用の座標（お題と同じ正規化座標）に */
+    trailAt(fit) {
+      const th = fit.deg * RAD;
+      const c = Math.cos(th); const sn = Math.sin(th);
+      return unit.map((s) => s.map(([x, y]) => [
+        fit.s * (c * x - sn * y) + fit.tx,
+        fit.s * (sn * x + c * y) + fit.ty,
+      ]));
+    },
+
+    /** fit のスコアなど */
+    result(fit) {
+      evalD(fit.deg, fit.s, fit.tx, fit.ty);
+      let cov = 0;
+      for (let i = 0; i < dT.length; i++) if (dT[i] <= COVER_TOL) cov++;
+      const score = Math.round(distanceToScore(fit.D) * 10) / 10;
+      return {
+        score: Math.min(100, Math.max(0, score)),
+        D: fit.D,
+        coverage: cov / dT.length,
+        templateNorm: tNorm,
+        trailNorm: this.trailAt(fit),
+        rotation: fit.deg,
+        fit,
+      };
+    },
+  };
+}
+
+/**
+ * 自動で向きを合わせて採点する。
+ * opts: { center, range, prior }（既定は 360° 探索）
+ */
+export function scoreTrack(templateStrokes, trailStrokes, opts = {}) {
+  const m = prepareMatch(templateStrokes, trailStrokes);
+  if (!m) return { score: 0, D: Infinity, coverage: 0, templateNorm: normalizeTemplate(templateStrokes), trailNorm: [], rotation: 0, fit: null };
+  return m.result(m.best(opts));
 }

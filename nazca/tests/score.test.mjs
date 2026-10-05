@@ -1,8 +1,8 @@
 // 採点ロジックの検証: node tests/score.test.mjs
-// お題そのものを GPS ノイズ付きで歩いた場合・街路（碁盤目）に沿って近似した場合・
+// お題そのものを GPS ノイズ付きで（どの向きでも）歩いた場合・街路（碁盤目）に沿って近似した場合・
 // 半分だけ歩いた場合・別のお題を歩いた場合・でたらめに歩いた場合のスコアを比較する。
 import { TEMPLATES } from '../js/challenges.js';
-import { scoreTrack } from '../js/score.js';
+import { scoreTrack, prepareMatch } from '../js/score.js';
 
 function rng(seed) {
   return () => {
@@ -84,7 +84,7 @@ function randomWalk(lenM) {
   return [out];
 }
 
-const walk = (t, size = 350, rot = (rand() - 0.5) * 70) => gpsNoise(densify(placeTemplate(t, size, rot, rand() * 500, rand() * 500)));
+const walk = (t, size = 350, rot = (rand() - 0.5) * 360) => gpsNoise(densify(placeTemplate(t, size, rot, rand() * 500, rand() * 500)));
 
 const pad = (s, n) => String(s).padStart(n);
 console.log(`${'TEMPLATE'.padEnd(10)} ${pad('NOISY', 6)} ${pad('GRID', 6)} ${pad('HALF', 6)} ${pad('OTHER', 6)} ${pad('MAXOTH', 7)} ${pad('RANDOM', 7)}  ms`);
@@ -103,7 +103,7 @@ for (const t of TEMPLATES) {
   stats.noisy.push(noisy); stats.grid.push(grid); stats.half.push(half); stats.other.push(avgO); stats.rand.push(rw);
   console.log(`${t.id.padEnd(10)} ${pad(noisy.toFixed(1), 6)} ${pad(grid.toFixed(1), 6)} ${pad(half.toFixed(1), 6)} ${pad(avgO.toFixed(1), 6)} ${pad(maxO.toFixed(1), 7)} ${pad(rw.toFixed(1), 7)}  ${ms}`);
   if (noisy < 95) { fails++; console.log(`  ! ${t.id}: お題どおりの歩行が 95% 未満`); }
-  if (avgO > 33) { fails++; console.log(`  ! ${t.id}: 別のお題の平均が 33% 超`); }
+  if (avgO > 40) { fails++; console.log(`  ! ${t.id}: 別のお題の平均が 40% 超`); }
   if (grid < 75) { fails++; console.log(`  ! ${t.id}: 碁盤目近似が 75% 未満`); }
   if (noisy <= maxO) { fails++; console.log(`  ! ${t.id}: 別のお題が正解以上のスコア`); }
 }
@@ -114,8 +114,38 @@ console.log(`AVG        ${pad(avg(stats.noisy), 6)} ${pad(avg(stats.grid), 6)} $
 const perfect = scoreTrack(TEMPLATES[0].strokes, placeTemplate(TEMPLATES[0], 300, 20, 10, 10)).score;
 console.log('perfect (noise-free, rotated 20deg):', perfect);
 if (perfect < 99.5) { fails++; console.log('  ! 完全一致が 99.5% 未満'); }
-const mirrored = scoreTrack(TEMPLATES.find((t) => t.id === 'arrow').strokes, placeTemplate(TEMPLATES.find((t) => t.id === 'arrow'), 300, 180, 0, 0)).score;
-console.log('arrow rotated 180deg (should be low):', mirrored);
+// どんな向きで歩いても（ガイドを回して置いても）自動で合わせられる
+for (const deg of [90, 137, 180, -100]) {
+  const arrow = TEMPLATES.find((t) => t.id === 'arrow');
+  const sc = scoreTrack(arrow.strokes, placeTemplate(arrow, 300, deg, 0, 0)).score;
+  console.log(`arrow rotated ${deg}deg:`, sc);
+  if (sc < 99.5) { fails++; console.log('  ! 回転した完全一致が 99.5% 未満'); }
+}
+// 鏡像（裏返し）は合わない（※カギや矢印のように、裏返しが「回転」と同じになる形は除く）
+for (const id of ['note', 'bolt']) {
+  const t = TEMPLATES.find((x) => x.id === id);
+  const mir = t.strokes.map((st) => st.map(([x, y]) => [-x, y]));
+  const sc = scoreTrack(t.strokes, gpsNoise(densify(placeTemplate({ strokes: mir }, 350, 0, 0, 0)))).score;
+  const ok = scoreTrack(t.strokes, walk(t)).score;
+  console.log(`${id} mirrored:`, sc, ' normal:', ok);
+  if (sc > ok - 15) { fails++; console.log(`  ! ${id}: 鏡像が正しい形に近すぎる`); }
+}
+// MATCH: 向きを固定した採点（fitAt）は、自動の最適な向きでは自動採点と一致し、ずらすと下がる
+{
+  const t = TEMPLATES.find((x) => x.id === 'ufo');
+  const m = prepareMatch(t.strokes, walk(t, 350, 63));
+  const best = m.best();
+  const at = m.fitAt(best.deg, best);
+  const off = m.fitAt(best.deg + 25, best);
+  const sBest = m.result(best).score; const sAt = m.result(at).score; const sOff = m.result(off).score;
+  console.log(`ufo walked at 63deg -> auto ${best.deg.toFixed(1)}deg ${sBest} / fitAt same ${sAt} / +25deg ${sOff}`);
+  if (Math.abs(sAt - sBest) > 0.3) { fails++; console.log('  ! fitAt が自動採点と一致しない'); }
+  if (sOff > sBest - 5) { fails++; console.log('  ! 向きをずらしてもスコアが下がらない'); }
+  if (Math.abs(((best.deg + 63) % 360 + 540) % 360 - 180) > 3) { fails++; console.log('  ! 自動の向きが歩いた向きと合わない'); }
+  // ガイドの向き（-63°）をヒントに渡しても同じ結果
+  const withPrior = m.best({ prior: [-63] });
+  if (Math.abs(m.result(withPrior).score - sBest) > 0.3) { fails++; console.log('  ! prior 付きの結果が違う'); }
+}
 console.log('empty:', scoreTrack(TEMPLATES[0].strokes, []).score, ' single point:', scoreTrack(TEMPLATES[0].strokes, [[[0, 0]]]).score);
 if (fails) { console.log(`FAIL: ${fails}`); process.exit(1); }
 console.log('OK');

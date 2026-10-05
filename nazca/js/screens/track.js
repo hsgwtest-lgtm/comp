@@ -229,7 +229,7 @@ export default {
           title: `ODAI: ${tpl.name}`,
           body: h('div', { class: 'center' }, big,
             h('p', {}, `「${tpl.ja}」の形になるように歩こう。`),
-            h('p', { class: 'muted' }, 'GUIDE でお題を地図に重ね、地図を動かして位置・大きさ・向きを決めて SET。採点では場所・大きさ・向き（±45°）は自由です。一筆書きできない線は PAUSE で移動しよう。')),
+            h('p', { class: 'muted' }, 'GUIDE でお題を地図に重ね、地図を動かして位置・大きさ・向きを決めて SET。場所・大きさ・向きは自由で、FINISH のあと採点の前に軌跡を回してお題に重ねられます。一筆書きできない線は PAUSE で移動しよう。')),
         });
       });
       stage.append(odai);
@@ -309,6 +309,8 @@ export default {
         navigate(`track/${kind}`, { replace: true });
         return;
       }
+      // ガイドを置いた向き（地図上で北から時計回りの角度）。採点の向き合わせの手がかりにする
+      if (guideState === 'set' && guidePlacement) result.guideRot = normDeg(guidePlacement.bearing + guidePlacement.rot);
       finishedTrack.save(result);
       try { localStorage.removeItem(GUIDE_KEY); } catch { /* noop */ }
       sfx.finish();

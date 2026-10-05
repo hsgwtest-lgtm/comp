@@ -69,7 +69,7 @@ function cpuDaily(dayKey) {
   const levels = [0.07, 0.1, 0.14, 0.2, 0.3];
   const posts = levels.map((noise, i) => {
     const strokes = wobble(tpl.strokes, rand, noise, (rand() - 0.5) * 30);
-    const score = scoreTrack(tpl.strokes, strokes).score;
+    const score = scoreTrack(tpl.strokes, strokes, { range: 45 }).score; // CPU はほぼ正立なので探索を絞って軽く
     return {
       id: `cpu-${dayKey}-${i}`, kind: 'daily', uid: `cpu-${i}`, name: CPU_NAMES[i], cpu: true,
       dayKey, challengeId: tpl.id, challengeName: tpl.ja, score,
