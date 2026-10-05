@@ -1,0 +1,83 @@
+rules_version = '2';
+
+// nazca — Cloud Firestore セキュリティルール
+// ・閲覧・投稿は匿名ログイン済みのユーザーのみ
+// ・SKETCH-ONLY 投稿は緯度経度（geo）を含められない（位置情報をサーバーに残さない）
+// ・投稿の編集はリアクション（reactions）の更新のみ。削除は投稿者本人のみ
+// ・文字数の上限はアプリ側（名前10字・タイトル20字）で管理し、ここでは大きめの安全上限だけを設ける
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isValidShape(d) {
+      return d.shape is list && d.shape.size() >= 1 && d.shape.size() <= 60;
+    }
+
+    // 公開モードと位置情報の整合性
+    function isValidPublish(d) {
+      return (d.publish == 'sketch' && !d.keys().hasAny(['geo']))
+          || (d.publish == 'map' && d.geo is list && d.geo.size() >= 1 && d.geo.size() <= 60);
+    }
+
+    function isValidBase(d) {
+      return d.uid == request.auth.uid
+          && d.name is string && d.name.size() >= 1 && d.name.size() <= 40
+          && d.distance is number && d.distance >= 0 && d.distance <= 200000
+          && d.duration is number && d.duration >= 0
+          && d.reactions == {}
+          && d.createdAt == request.time
+          && isValidShape(d)
+          && isValidPublish(d);
+    }
+
+    function validReactionsUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+          && request.resource.data.reactions.keys().hasOnly(['like', 'star', 'oneup', 'gg']);
+    }
+
+    match /daily_posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'v',
+                                                  'dayKey', 'challengeId', 'challengeName', 'score', 'reactions', 'createdAt'])
+        && request.resource.data.kind == 'daily'
+        && isValidBase(request.resource.data)
+        && request.resource.data.score is number
+        && request.resource.data.score >= 0 && request.resource.data.score <= 100
+        && request.resource.data.dayKey is string
+        && request.resource.data.dayKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.challengeId is string && request.resource.data.challengeId.size() <= 40;
+      allow update: if signedIn() && validReactionsUpdate();
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /free_posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'v',
+                                                  'title', 'reactions', 'createdAt'])
+        && request.resource.data.kind == 'free'
+        && isValidBase(request.resource.data)
+        && request.resource.data.title is string && request.resource.data.title.size() <= 80;
+      allow update: if signedIn() && validReactionsUpdate();
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // お題の上書き（管理者が Firebase コンソールから作成）
+    match /challenges/{dayKey} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40;
+    }
+  }
+}

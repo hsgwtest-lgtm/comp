@@ -1,0 +1,101 @@
+// 作品の詳細（ギャラリー・ランキングから開くモーダル）
+import { h, modal, confirmDialog, toast } from '../ui.js';
+import { icon, makePixelCanvas, renderLayers, PAL } from '../pixel.js';
+import { PixelMap } from '../pixelmap.js';
+import { unpackFlat, unpackGeo } from '../geo.js';
+import { store, STAMPS } from '../store/index.js';
+import { formatDuration, formatStamp } from '../time.js';
+import { scoreLabel } from '../score.js';
+import { sfx } from '../sfx.js';
+
+export function stampButtons(post, onChange) {
+  const s = store();
+  const row = h('div', { class: 'stamps' });
+  const render = () => {
+    row.replaceChildren();
+    for (const st of STAMPS) {
+      const list = (post.reactions && post.reactions[st.id]) || [];
+      const mine = list.includes(s.uid);
+      const b = h('button', { type: 'button', class: `stamp ${mine ? 'on' : ''}`, 'aria-pressed': String(mine), html: `${st.icon ? icon(st.icon) : `<span class="st-txt">${st.label}</span>`}<span class="st-n">${list.length}</span>` });
+      b.addEventListener('click', async () => {
+        const on = !mine;
+        if (on) sfx.coin(); else sfx.blip();
+        const before = JSON.parse(JSON.stringify(post.reactions || {}));
+        const set = new Set(list);
+        if (on) set.add(s.uid); else set.delete(s.uid);
+        post.reactions = { ...(post.reactions || {}), [st.id]: [...set] };
+        render();
+        try {
+          post.reactions = await s.react(post.kind, post.id, st.id, on);
+          render();
+          if (onChange) onChange(post);
+        } catch (e) {
+          console.error(e);
+          post.reactions = before;
+          render();
+          sfx.error();
+          toast('送信できませんでした');
+        }
+      });
+      row.append(b);
+    }
+  };
+  render();
+  return row;
+}
+
+export async function openDetail(post, { onChange, onDelete } = {}) {
+  const s = store();
+  const isMap = post.publish === 'map' && post.geo && post.geo.length;
+  const art = h('div', { class: `detail-art ${isMap ? 'is-map' : ''}` });
+  let map = null;
+  if (!isMap) {
+    const cv = makePixelCanvas(96, 96, 'detail-cv');
+    renderLayers(cv, [{ strokes: unpackFlat(post.shape), color: PAL.mint }], { pad: 5 });
+    art.append(cv);
+  }
+  const head = post.kind === 'daily'
+    ? h('div', { class: 'detail-head' },
+      h('div', { class: 'd-score' }, h('b', {}, post.score.toFixed(1)), h('span', {}, '%'), h('em', { class: `rank-${scoreLabel(post.score)}` }, scoreLabel(post.score))),
+      h('div', { class: 'd-odai' }, `ODAI: ${post.challengeName || '-'}`))
+    : h('div', { class: 'detail-head' }, h('div', { class: 'd-title' }, post.title || 'UNTITLED'));
+
+  const meta = h('div', { class: 'detail-meta' },
+    h('div', {}, h('label', {}, 'BY'), h('b', { class: 'jp' }, post.name || '???'), post.cpu ? h('span', { class: 'cpu' }, 'CPU') : null),
+    h('div', {}, h('label', {}, 'DIST'), h('b', {}, `${(post.distance || 0).toLocaleString()}m`)),
+    h('div', {}, h('label', {}, 'TIME'), h('b', {}, formatDuration((post.duration || 0) * 1000))),
+    h('div', {}, h('label', {}, 'DATE'), h('b', {}, formatStamp(post.createdAt))),
+    h('div', {}, h('label', {}, 'MODE'), h('b', { html: isMap ? `${icon('map')} MAP` : `${icon('sketch')} SKETCH` })));
+
+  const body = h('div', { class: 'detail' }, art, head, stampButtons(post, onChange), meta);
+  let deleted = false;
+  if (post.uid === s.uid && !post.cpu) {
+    const del = h('button', { type: 'button', class: 'linkish danger', html: `${icon('trash')} この投稿を削除` });
+    del.addEventListener('click', async () => {
+      if (!(await confirmDialog('DELETE?', 'この投稿を削除します。元に戻せません。', 'DELETE', 'CANCEL'))) return;
+      try {
+        await s.deletePost(post.kind, post.id);
+        toast('削除しました');
+        deleted = true;
+        body.closest('.modal')?.querySelector('.modal-actions .btn')?.click();
+        if (onDelete) onDelete(post);
+      } catch (e) {
+        console.error(e); sfx.error(); toast('削除できませんでした');
+      }
+    });
+    body.append(del);
+  }
+
+  const done = modal({ body, cls: 'modal-detail', actions: [{ label: 'CLOSE', value: true, cls: 'btn-ghost' }] });
+  if (isMap) {
+    requestAnimationFrame(() => {
+      map = new PixelMap(art, { zoom: 16, controls: true });
+      const segs = unpackGeo(post.geo);
+      map.setTrail(segs);
+      map.fitBounds(segs.flat(), 24, 18);
+    });
+  }
+  await done;
+  if (map) map.destroy();
+  return { deleted };
+}
