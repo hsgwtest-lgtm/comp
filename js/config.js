@@ -5,7 +5,18 @@
 //  null のままだと「ローカルモード」（この端末だけに保存）で動きます。
 // ============================================================
 
-export const FIREBASE_CONFIG = null;
+export const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyA-Ck2id3uxYaJ1B-9Z7pFtZUYFDEYEaqE",
+  authDomain: "nazca-23d94.firebaseapp.com",
+  projectId: "nazca-23d94",
+  storageBucket: "nazca-23d94.firebasestorage.app",
+  messagingSenderId: "717517293376",
+  appId: "1:717517293376:web:9c65d132079b98f62ddca5",
+  measurementId: "G-W1DHF06L5T"
+};
+
+
+
 /* 例:
 export const FIREBASE_CONFIG = {
   apiKey: "AIza....",
