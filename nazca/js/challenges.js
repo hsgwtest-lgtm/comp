@@ -120,11 +120,89 @@ export const TEMPLATES = [
       [[0, 3], [10, 3]],
     ],
   },
+  // ---- v2.1 で追加 ----
+  {
+    id: 'onigiri', name: 'ONIGIRI', ja: 'オニギリ', level: 1,
+    strokes: [
+      [[4, 0], [6, 0], [10, 7], [10, 9], [9, 10], [1, 10], [0, 9], [0, 7], [4, 0]],
+      [[3, 10], [3, 6.5], [7, 6.5], [7, 10]],
+    ],
+  },
+  {
+    id: 'snail', name: 'SNAIL', ja: 'カタツムリ', level: 3,
+    strokes: [
+      [[0.5, 9], [12, 9]],
+      [[0.5, 9], [0, 7], [0.6, 5.6], [1.6, 5], [2.6, 5.4], [3.2, 7]],
+      [[3.2, 9], [3.2, 4], [4.6, 2.4], [9.2, 2.4], [10.8, 4], [10.8, 7.6], [9.6, 8.6], [6.4, 8.6], [6, 7.6], [6, 5.4], [8, 5.4]],
+      [[1, 5.2], [0, 2.6]],
+      [[2.2, 5], [2.8, 2.4]],
+    ],
+  },
+  {
+    id: 'fuji', name: 'MT.FUJI', ja: 'フジサン', level: 2,
+    strokes: [
+      [[0, 9], [4, 1], [6, 1], [10, 9], [0, 9]],
+      [[2.5, 4], [3.5, 5], [4.5, 4], [5, 5], [5.5, 4], [6.5, 5], [7.5, 4]],
+    ],
+  },
+  {
+    id: 'rabbit', name: 'RABBIT', ja: 'ウサギ', level: 2,
+    strokes: [
+      [[1, 13], [0, 12], [0, 8], [1, 7], [2, 7], [1.5, 1.5], [2, 0], [3, 0], [3.5, 1.5], [4, 7], [5, 7], [5.5, 1.5], [6, 0], [7, 0], [7.5, 1.5], [7, 7], [8, 7], [9, 8], [9, 12], [8, 13], [1, 13]],
+      [[3, 9.5], [3, 10.5]],
+      [[6, 9.5], [6, 10.5]],
+    ],
+  },
+  {
+    id: 'shoe', name: 'SHOE', ja: 'クツ', level: 2,
+    strokes: [
+      [[0, 1], [3, 1], [3.5, 3], [6, 4], [9, 5], [11, 6], [11, 8], [0, 8], [0, 1]],
+      [[0, 6.5], [11, 6.5]],
+    ],
+  },
+  {
+    id: 'moon', name: 'MOON', ja: 'ミカヅキ', level: 1,
+    strokes: [[[7.5, 0.67], [5.87, 0.08], [4.13, 0.08], [2.5, 0.67], [1.17, 1.79], [0.3, 3.29], [0, 5], [0.3, 6.71], [1.17, 8.21], [2.5, 9.33], [4.13, 9.92], [5.87, 9.92], [7.5, 9.33], [6.12, 9.16], [4.87, 8.56], [3.87, 7.6], [3.22, 6.37], [3, 5], [3.22, 3.63], [3.87, 2.4], [4.87, 1.44], [6.12, 0.84], [7.5, 0.67]]],
+  },
+  {
+    id: 'apple', name: 'APPLE', ja: 'リンゴ', level: 2,
+    strokes: [
+      [[5, 2.5], [6.5, 1.8], [8.5, 2.2], [10, 4], [10, 7], [8.8, 9.4], [7.2, 10.2], [6, 9.8], [5, 10], [4, 9.8], [2.8, 10.2], [1.2, 9.4], [0, 7], [0, 4], [1.5, 2.2], [3.5, 1.8], [5, 2.5]],
+      [[5, 2.5], [5, 0]],
+      [[5, 1], [6, 0], [8, 0], [7, 1], [5, 1]],
+    ],
+  },
+  {
+    id: 'tulip', name: 'TULIP', ja: 'チューリップ', level: 2,
+    strokes: [
+      [[2, 0], [3.5, 2], [5, 0], [6.5, 2], [8, 0], [8, 4], [7, 6], [5, 7], [3, 6], [2, 4], [2, 0]],
+      [[5, 7], [5, 14]],
+      [[5, 12], [8, 9], [8.6, 10.6], [5, 13]],
+    ],
+  },
+  {
+    id: 'yacht', name: 'YACHT', ja: 'ヨット', level: 2,
+    strokes: [
+      [[5, 0], [0.5, 8], [5, 8], [5, 0]],
+      [[6, 1.5], [9.5, 8], [6, 8], [6, 1.5]],
+      [[0, 9], [10, 9], [8.5, 11], [1.5, 11], [0, 9]],
+    ],
+  },
+  {
+    id: 'letter', name: 'LETTER', ja: 'テガミ', level: 1,
+    strokes: [[[0, 0], [10, 0], [10, 7], [0, 7], [0, 0], [5, 4], [10, 0]]],
+  },
 ];
 
-// ローテーション順（似た形が続かないように並べ替え）
-const ORDER = ['cat', 'heart', 'key', 'star', 'fish', 'mushroom', 'house', 'note', 'ghost', 'crown',
+// ローテーション（似た形が続かないように並べ替え）
+// v1: 20 種。ORDER_V2_FROM より前の日はこの順番のまま（過去のランキングのお題が変わらないように）
+const ORDER_V1 = ['cat', 'heart', 'key', 'star', 'fish', 'mushroom', 'house', 'note', 'ghost', 'crown',
   'arrow', 'ufo', 'cup', 'tree', 'bolt', 'smile', 'sword', 'umbrella', 'gem', 'rocket'];
+// v2.1: 30 種。新しいお題を 1 日おきに混ぜ、直前に出たお題（ufo, cup）は最後に
+const ORDER_V2_FROM = '2026-10-07';
+const ORDER_V2 = ['onigiri', 'tree', 'snail', 'bolt', 'fuji', 'smile', 'rabbit', 'sword', 'shoe', 'umbrella',
+  'moon', 'gem', 'apple', 'rocket', 'tulip', 'cat', 'yacht', 'heart', 'letter', 'key',
+  'star', 'fish', 'mushroom', 'house', 'note', 'ghost', 'crown', 'arrow', 'ufo', 'cup'];
 
 const byId = new Map(TEMPLATES.map((t) => [t.id, t]));
 
@@ -132,11 +210,12 @@ export function templateById(id) {
   return byId.get(id) || null;
 }
 
+const mod = (n, m) => ((n % m) + m) % m;
+
 /** 組み込みローテーションによる日替わりお題 */
 export function builtinChallenge(dayKey = challengeDayKey()) {
-  const n = dayNumber(dayKey);
-  const id = ORDER[((n % ORDER.length) + ORDER.length) % ORDER.length];
-  return byId.get(id);
+  if (dayKey < ORDER_V2_FROM) return byId.get(ORDER_V1[mod(dayNumber(dayKey), ORDER_V1.length)]);
+  return byId.get(ORDER_V2[mod(dayNumber(dayKey) - dayNumber(ORDER_V2_FROM), ORDER_V2.length)]);
 }
 
 /**

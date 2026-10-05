@@ -4,14 +4,14 @@
 // ・SIGNAL：いちばん近い未発見の地上絵ほどバーが増える（方向はわからない）
 // ・RADAR：未発見の地上絵の方向に矢印と距離を出す
 // ・現在地を追いかけ、コンパスで地図を進行方向に回せる。実際にその場所へ歩いて行くと VISITED
-// ・ペルーの砂漠には本物のナスカの地上絵も
-import { h, btn, scope, toast, modal } from '../ui.js';
+// ・世界中に本物の地上絵が 40 か所。ATLAS（図鑑）で一覧・解説、近くまで WARP もできる
+import { h, btn, scope, toast, modal, closeAllModals } from '../ui.js';
 import { icon, PAL, pack, makePixelCanvas, renderLayers } from '../pixel.js';
 import { PixelMap, normDeg, merc, unmerc } from '../pixelmap.js';
 import { navigate } from '../router.js';
 import { store } from '../store/index.js';
 import { unpackGeo, unpackFlat, haversine, distToSegments, boundsCenter, segmentsToXY } from '../geo.js';
-import { ANCIENT, ANCIENT_NOTE, ancientSegments } from '../ancient.js';
+import { ANCIENT, TYPE_LABEL, GROUP_NOTE, ANCIENT_FOOT, COUNTRY_ORDER, ancientSegments } from '../ancient.js';
 import { openDetail } from './detail.js';
 import { formatStamp } from '../time.js';
 import { sfx } from '../sfx.js';
@@ -22,6 +22,7 @@ const VISIT_KEY = 'nazca.visited';
 const VIEW_KEY = 'nazca.exploreView';
 const INTRO_KEY = 'nazca.exploreIntro';
 const RADAR_KEY = 'nazca.radar';
+const WORLD_KEY = 'nazca.worldIntro';
 const REVEAL_PX = 72;      // 画面上でこの大きさ（CSS px）以上に映ったら「発見」
 const VISIT_M = 35;        // この距離まで近づいたら「訪問」
 const RADAR_N = 4;         // RADAR で矢印を出す数
@@ -91,11 +92,20 @@ function glyphTitle(g) {
 
 function glyphThumb(g, size = 40) {
   const cv = makePixelCanvas(size, size, 'thumb');
-  // 作品は作者が決めた向き（shape は回転済み）、古代の地上絵は北が上
-  const strokes = g.post && g.post.shape ? unpackFlat(g.post.shape) : segmentsToXY(g.segs);
+  // 作品は作者が決めた向き（shape は回転済み）、世界の地上絵は正立した図柄
+  const strokes = g.kind === 'ancient' ? g.ancient.strokes : (g.post && g.post.shape ? unpackFlat(g.post.shape) : segmentsToXY(g.segs));
   renderLayers(cv, [{ strokes, color: g.kind === 'ancient' ? PAL.sand : (g.mine ? PAL.mint : '#f3dcab') }], { pad: 3, bg: '#47291b', grid: false });
   return cv;
 }
+
+/** 文章の最初の一文（発見カード用） */
+const firstSentence = (s) => { const i = s.indexOf('。'); return i >= 0 ? s.slice(0, i + 1) : s; };
+
+/** 東西 meters を画面上で約 px に見せるズーム */
+const zoomFor = (lat, meters, px) => Math.log2((px * Math.cos(lat * RAD_) * 2 * Math.PI * 6378137) / (256 * Math.max(1, meters)));
+
+/** id から決まる 0〜1 の値（WARP の方向を毎回同じにする） */
+const hash01 = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 16777619); } return ((x >>> 0) % 10000) / 10000; };
 
 export default {
   async mount(el) {
@@ -114,7 +124,10 @@ export default {
     // ---- 画面 ----
     const backBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '戻る', html: icon('back') });
     backBtn.addEventListener('click', () => { sfx.back(); navigate(''); });
-    const foundChip = h('div', { class: 'chip', title: '見つけた地上絵' });
+    const foundChip = h('button', { type: 'button', class: 'chip chip-btn', title: '見つけた地上絵（ATLAS を開く）' });
+    foundChip.addEventListener('click', () => openAtlas());
+    const atlasBtn = h('button', { type: 'button', class: 'tool-btn tool-atlas', 'aria-label': 'ATLAS（世界の地上絵の図鑑）', html: `${icon('book')} ATLAS` });
+    atlasBtn.addEventListener('click', () => openAtlas());
     const visitChip = h('div', { class: 'chip chip-visit', title: '訪れた地上絵' });
     const stage = h('div', { class: 'explore-stage' });
     const mapEl = h('div', { class: 'map-wrap' });
@@ -124,7 +137,7 @@ export default {
     const locBtn = h('button', { type: 'button', class: 'tool-btn', 'aria-label': '現在地', html: icon('locate') });
     const cardSlot = h('div', { class: 'card-slot' });
     stage.append(mapEl, labels,
-      h('div', { class: 'stage-tools explore-tools' }, radarBtn, signalEl, h('div', { class: 'grow' }), locBtn),
+      h('div', { class: 'stage-tools explore-tools' }, radarBtn, signalEl, h('div', { class: 'grow' }), atlasBtn, locBtn),
       cardSlot);
     el.append(
       h('header', { class: 'topbar' }, backBtn,
@@ -343,9 +356,9 @@ export default {
       const isAncient = g.kind === 'ancient';
       const p = g.post;
       const meta = isAncient
-        ? h('p', { class: 'dc-meta' }, g.ancient.note)
+        ? h('p', { class: 'dc-meta' }, `${firstSentence(g.ancient.note)}（VIEW で解説）`)
         : h('p', { class: 'dc-meta' }, `${p.name || '???'} ／ ${formatStamp(p.createdAt)} ／ ${fmtDist(p.distance || 0)} 歩いた`);
-      const sub = isAncient ? `${g.ancient.name} ／ 古代の地上絵` : (p.kind === 'daily' ? 'DAILY CHALLENGE' : 'FREE DOODLE');
+      const sub = isAncient ? `${g.ancient.country} ／ ${TYPE_LABEL[g.ancient.type] || ''}` : (p.kind === 'daily' ? 'DAILY CHALLENGE' : 'FREE DOODLE');
       const card = h('div', { class: 'disc-card frame', role: 'dialog', 'aria-label': '発見' },
         h('div', { class: `dc-head ${type === 'visited' ? 'dc-visit' : ''}` }, type === 'visited' ? 'VISITED!' : 'NEW DISCOVERY!'),
         h('div', { class: 'dc-body' },
@@ -363,15 +376,22 @@ export default {
 
     const openGlyph = (g) => {
       if (g.kind === 'ancient') {
+        const a = g.ancient;
         const big = makePixelCanvas(80, 80, 'detail-cv');
-        renderLayers(big, [{ strokes: segmentsToXY(g.segs), color: PAL.sand, thick: 1 }], { pad: 6, bg: '#47291b', grid: false });
+        renderLayers(big, [{ strokes: a.strokes, color: PAL.sand, thick: 1 }], { pad: 6, bg: '#47291b', grid: false });
+        const facts = h('dl', { class: 'anc-facts' },
+          h('dt', {}, 'PLACE'), h('dd', {}, a.country),
+          h('dt', {}, 'ERA'), h('dd', {}, a.era),
+          a.sizeLabel ? [h('dt', {}, 'SIZE'), h('dd', {}, a.sizeLabel)] : null);
         modal({
-          title: `${g.ancient.ja}`,
-          body: h('div', { class: 'detail' },
+          title: a.ja,
+          body: h('div', { class: 'detail anc-detail' },
             h('div', { class: 'detail-art' }, big),
-            h('p', {}, g.ancient.note),
-            h('p', { class: 'muted small' }, ANCIENT_NOTE),
-            h('p', { class: 'muted small' }, `大きさの目安 約${g.ancient.size}m`)),
+            h('div', { class: 'anc-sub' }, `${a.name} ／ ${TYPE_LABEL[a.type] || ''}`),
+            facts,
+            h('p', { class: 'anc-note' }, a.note),
+            a.group && GROUP_NOTE[a.group] ? h('p', { class: 'muted small' }, GROUP_NOTE[a.group]) : null,
+            h('p', { class: 'muted small' }, ANCIENT_FOOT)),
           cls: 'modal-detail',
           actions: [{ label: 'CLOSE', value: true, cls: 'btn-ghost' }],
         });
@@ -384,6 +404,72 @@ export default {
           closeCard(); updateCounters(); map.requestRender();
         }
       });
+    };
+
+    // ---- ATLAS（世界の地上絵の図鑑）----
+    // 見つけたもの: 名前・解説（VIEW）・その場所へ（GO）。まだのもの: 国名と距離だけ。WARP で近くまで飛べる
+    const flyTo = (g, warp) => {
+      locMode = 'free'; updateLocBtn();
+      map.follow = false;
+      if (!warp) {
+        const t = map.computeFit(g.segs.flat(), 40, 19, null, map.bearing);
+        map.setView(t.center, t.zoom);
+        return;
+      }
+      // 地上絵から少し離れた場所へ（方向は id ごとに固定）。あとは SIGNAL と RADAR でさがす
+      const size = g.ancient ? g.ancient.size : g.radiusM * 2;
+      const off = Math.min(80000, Math.max(2500, size * 40));
+      const ang = hash01(g.id) * 2 * Math.PI;
+      const lat = g.center.lat + (off * Math.cos(ang)) / 111320;
+      const lng = g.center.lng + (off * Math.sin(ang)) / (111320 * Math.cos(g.center.lat * RAD_));
+      const z = Math.min(15, Math.max(3, zoomFor(lat, off, 130)));
+      map.setView({ lat, lng: ((lng + 540) % 360) - 180 }, z, 0);
+      sfx.ping();
+      toast(radarOn ? `${g.ancient ? g.ancient.country : ''}のどこかにワープ！ SIGNAL と RADAR でさがそう` : `${g.ancient ? g.ancient.country : ''}のどこかにワープ！ RADAR をオンにすると方向がわかるよ`, 3600);
+    };
+
+    const openAtlas = async () => {
+      sfx.blip();
+      const anc = glyphs.filter((g) => g.kind === 'ancient');
+      const nF = anc.filter((g) => found.has(g.id)).length;
+      const posts = glyphs.filter((g) => g.kind !== 'ancient');
+      const nP = posts.filter((g) => found.has(g.id)).length;
+      let pick = null;
+      const choose = (v) => { pick = v; closeAllModals(); };
+      const list = h('div', { class: 'atlas' });
+      for (const country of COUNTRY_ORDER) {
+        const items = anc.filter((g) => g.ancient.country === country)
+          .map((g) => ({ g, d: haversine(map.center, g.center) }))
+          .sort((a, b) => a.d - b.d);
+        if (!items.length) continue;
+        const nc = items.filter(({ g }) => found.has(g.id)).length;
+        list.append(h('div', { class: 'atlas-country' }, h('b', {}, country), h('span', {}, `${nc}/${items.length}`)));
+        for (const { g, d } of items) {
+          const ok = found.has(g.id);
+          const q = h('div', { class: 'thumb atlas-q', 'aria-hidden': 'true' }, '?');
+          const text = h('div', { class: 'at-text' },
+            h('div', { class: 'at-name' }, ok ? g.ancient.ja : '？？？'),
+            h('div', { class: 'at-sub' }, `${TYPE_LABEL[g.ancient.type] || ''} ／ ${ok ? '' : 'ここから '}${fmtDist(d)}`));
+          const row = h('div', { class: `atlas-row${ok ? ' ok' : ''}${visited.has(g.id) ? ' visited' : ''}` },
+            ok ? glyphThumb(g, 32) : q, text,
+            ok ? btn('VIEW', () => choose({ view: g }), 'btn-sm btn-ghost') : null,
+            btn(ok ? 'GO' : 'WARP', () => choose({ [ok ? 'go' : 'warp']: g }), ok ? 'btn-sm' : 'btn-sm btn-pink'));
+          list.append(row);
+        }
+      }
+      await modal({
+        title: 'ATLAS',
+        cls: 'modal-wide modal-atlas',
+        body: h('div', {},
+          h('p', { class: 'atlas-head' }, `世界の地上絵 `, h('b', {}, `${nF}`), ` / ${anc.length}`, posts.length ? h('span', { class: 'muted' }, `　みんなの地上絵 ${nP} / ${posts.length}`) : null),
+          h('p', { class: 'muted small' }, 'まだ見つけていない地上絵は WARP で近くまで飛べます。そこから先は SIGNAL と RADAR でさがそう。'),
+          list),
+        actions: [{ label: 'CLOSE', value: null, cls: 'btn-ghost' }],
+      });
+      if (!pick || !alive) return;
+      if (pick.view) openGlyph(pick.view);
+      else if (pick.go) flyTo(pick.go, false);
+      else if (pick.warp) flyTo(pick.warp, true);
     };
 
     // 地上絵をタップ → 詳細
@@ -567,7 +653,21 @@ export default {
           <h3>${icon('gem')} 見つける</h3><p>地図を動かしてズームし、地上絵が画面の真ん中あたりに大きく映ると発見です。</p>
           <h3>${icon('radar')} SIGNAL と RADAR</h3><p>SIGNAL のバーは、いちばん近い未発見の地上絵ほど増えます。RADAR をオンにすると方向と距離がわかります。</p>
           <h3>${icon('walk')} 訪れる</h3><p>${icon('locate')} で現在地へ。もう一度押すとコンパスで地図が進行方向に回ります。実際にその場所まで歩いて行くと VISITED。</p>
-          <p class="muted">南米ペルーの砂漠にも、古い地上絵が眠っているとか…</p>
+          <h3>${icon('book')} 世界の地上絵</h3><p>ナスカだけでなく、世界中に本物の地上絵が ${ANCIENT.length} か所眠っています。見つけると歴史や雑学が読めます。ATLAS から近くまで WARP もできます。</p>
+        </div>`,
+        cls: 'modal-wide',
+      }), 300);
+    }
+    // すでに遊んだことのある人には、世界の地上絵の追加を一度だけお知らせ
+    let worldNews = false;
+    try { worldNews = !firstTime && !localStorage.getItem(WORLD_KEY); localStorage.setItem(WORLD_KEY, '1'); } catch { /* noop */ }
+    if (worldNews) {
+      setTimeout(() => alive && modal({
+        title: 'NEW!',
+        body: `<div class="help">
+          <h3>${icon('book')} 世界の地上絵が ${ANCIENT.length} か所に</h3>
+          <p>ナスカだけでなく、イギリスの白い馬、アメリカのヘビ、日本の古墳や大文字まで、世界中の本物の地上絵を追加しました。見つけると、歴史や雑学が読めます。</p>
+          <p>ATLAS ボタンで一覧を見たり、まだ見つけていない地上絵の近くまで WARP したりできます。</p>
         </div>`,
         cls: 'modal-wide',
       }), 300);

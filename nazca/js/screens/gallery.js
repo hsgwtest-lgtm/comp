@@ -65,7 +65,10 @@ export default {
     const renderDaily = async (quiet) => {
       if (!quiet) loading();
       const [posts, tpl] = await Promise.all([s.listDaily(dayKey), getChallenge(dayKey)]);
-      const ranked = rankDaily(posts);
+      // その日のお題と違うお題で採点されたスコア（古いバージョンのアプリなど）は比べられないので除く
+      const same = posts.filter((p) => p.cpu || !p.challengeId || p.challengeId === tpl.id);
+      const hiddenN = posts.length - same.length;
+      const ranked = rankDaily(same);
       const prev = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '前日', html: icon('back') });
       prev.addEventListener('click', () => { sfx.blip(); navigate(`gallery/daily/${shiftDayKey(dayKey, -1)}`); });
       const next = h('button', { type: 'button', class: 'icon-btn flip', 'aria-label': '翌日', html: icon('back'), disabled: dayKey >= today });
@@ -99,7 +102,8 @@ export default {
             h('div', {}, h('b', {}, `${dayKeyShort(dayKey)}  ${tpl.name}`), h('small', {}, `お題: ${tpl.ja} ／ ${dayKeyRangeLabel(dayKey)}`))),
           next),
         board,
-        h('p', { class: 'muted small center' }, `${ranked.length} PLAYERS ／ 各プレイヤーのベストスコアを表示`));
+        h('p', { class: 'muted small center' }, `${ranked.length} PLAYERS ／ 各プレイヤーのベストスコアを表示`),
+        hiddenN ? h('p', { class: 'muted small center' }, `別のお題で採点されたスコア ${hiddenN} 件は表示していません（古いバージョンのアプリで遊んだ可能性があります）`) : null);
       const hl = content.querySelector('.hl');
       if (hl) hl.scrollIntoView({ block: 'center' });
     };
