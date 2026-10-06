@@ -2,7 +2,7 @@
 // アプリ本体（同一オリジンのファイル）を事前キャッシュしてオフラインでも起動できるようにする。
 // 地図タイル・Firebase など外部への通信には関与しない。
 // ★ ファイルを更新したら VERSION を上げること（README 参照）
-const VERSION = 'nazca-v2.1.0';
+const VERSION = 'nazca-v2.1.1';
 
 const PRECACHE = [
   './',

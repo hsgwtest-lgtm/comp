@@ -145,7 +145,7 @@ EXPLORE は各コレクションから MAP の作品を最大 500 件ずつ読�
 - 採点テスト: `node tests/score.test.mjs`
 - 地図は外部ライブラリを使わない自前のタイルマップ（`js/pixelmap.js`）です。OpenStreetMap のタイルを
   読み込み、レトロパレットに減色して 1 ドット = 2px で表示します
-- アプリアイコンは `python3 tools/make_icons.py icons` で生成します（36×36 のドット絵：ナスカのハチドリと、線を描きながら歩く人）
+- アプリアイコンは `python3 tools/make_icons.py icons` で生成します（36×36 のドット絵：暗い土色の地面に色あせた黄土色のナスカのハチドリ）
 
 ## 制約・注意
 

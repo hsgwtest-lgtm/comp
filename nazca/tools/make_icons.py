@@ -53,36 +53,32 @@ def background(img):
     for x, y in [(7, 6), (26, 3), (32, 31), (3, 30), (14, 25), (30, 12)]:
         px[x, y] = BG_TOP
 
-def draw(art_only=False, with_walker=True):
-    img = Image.new('RGB', (N, N))
-    background(img)
+RETRO_BG = (52, 33, 22); RETRO_BG2 = (44, 27, 18); RETRO_STONE = (70, 46, 30)
+RETRO_LINE = (214, 178, 118); RETRO_SHADOW = (24, 14, 9); RETRO_FRAME = (120, 88, 56)
+
+def draw(art_only=False, with_walker=False):
+    """渋いレトロ版：暗い土色の地面に、色あせた黄土色のハチドリ。細い枠で古いカートリッジのラベル風に"""
+    img = Image.new('RGB', (N, N), RETRO_BG)
     px = img.load()
+    for y in range(N):
+        for x in range(N):
+            if (x * 7 + y * 13) % 29 == 0: px[x, y] = RETRO_BG2
+    for x, y in [(5, 5), (29, 8), (7, 25), (27, 21), (10, 30), (30, 27), (24, 31), (4, 18), (13, 4)]:
+        px[x, y] = RETRO_STONE
     hb = hummingbird(0, 1)
-    for x, y in hb:   # 影（右下に 1px）
-        if 0 <= x + 1 < N and 0 <= y + 1 < N and (x + 1, y + 1) not in hb: px[x + 1, y + 1] = SHADOW
-    for x, y in hb: px[x, y] = LINE
-    px[18, 9] = INK   # 目
-    if with_walker:
-        # 点線のトレイル（しっぽの先 → 歩く人）
-        for i, (x, y) in enumerate(bres((22, 30), (28, 33))):
-            if i % 2 == 0: px[x, y] = LINE
-        # 歩く人（ミント）。ピンクの帽子
-        W = ['.p.', 'ppp', '.m.', 'mmm', '.m.', 'm.m']
-        for yy, row in enumerate(W):
-            for xx, ch in enumerate(row):
-                X, Y = 29 + xx, 27 + yy
-                if ch == 'm': px[X, Y] = MINT
-                if ch == 'p': px[X, Y] = PINK
-    # きらきら
-    for (cx, cy) in [(29, 3), (5, 27)]:
-        px[cx, cy] = SPARK
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)): px[cx + dx, cy + dy] = GOLD
+    for x, y in hb:
+        if 0 <= x + 1 < N and 0 <= y + 1 < N and (x + 1, y + 1) not in hb: px[x + 1, y + 1] = RETRO_SHADOW
+    for x, y in hb: px[x, y] = RETRO_LINE
+    # 内側の細い枠（四隅は欠けたドット枠）
+    for i in range(2, N - 2):
+        for (x, y) in ((i, 1), (i, N - 2), (1, i), (N - 2, i)):
+            if (x, y) not in hb: px[x, y] = RETRO_FRAME
     return img
 
 def export(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     img = draw()
-    bg = BG_MID
+    bg = RETRO_BG
     def pixel(scale, size):
         art = img.resize((N * scale, N * scale), Image.NEAREST)
         canvas = Image.new('RGB', (size, size), bg)
