@@ -441,6 +441,7 @@ p { margin: 0 0 8px; }
 .res-stats b { font: 16px/1 var(--display); font-weight: normal; }
 .res-stats b.jp { font: 16px/1 var(--text); }
 .res-stats i { font-style: normal; font-size: 12px; color: var(--dim); margin-left: 4px; }
+.res-stats .dist-move { display: block; margin-top: 6px; font-size: 11px; color: var(--dim); white-space: nowrap; }
 .res-notes p { font-size: 12px; text-align: center; margin: 0; }
 
 .field > label, .sec-label { display: block; font: 8px/1 var(--display); color: var(--dim); margin: 8px 0 0; }

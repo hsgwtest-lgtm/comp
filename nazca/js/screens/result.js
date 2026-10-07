@@ -89,7 +89,9 @@ export default {
       : null;
 
     const stats = h('div', { class: 'res-stats' },
-      h('div', {}, h('label', {}, 'DIST'), h('b', {}, `${Math.round(f.distance).toLocaleString()}`), h('i', {}, 'm')),
+      h('div', {}, h('label', {}, 'DIST'), h('b', {}, `${Math.round(f.distance).toLocaleString()}`), h('i', {}, 'm'),
+        // PAUSE 中に歩いた分も距離に入っている（線にはならない）
+        f.moveDistance >= 1 ? h('small', { class: 'dist-move' }, `うち PAUSE 中 ${Math.round(f.moveDistance).toLocaleString()}m`) : null),
       h('div', {}, h('label', {}, 'TIME'), h('b', {}, formatDuration(f.movingMs))),
       tpl ? h('div', {}, h('label', {}, 'ODAI'), h('b', { class: 'jp' }, tpl.ja)) : null);
 

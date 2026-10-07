@@ -8,7 +8,7 @@ import { challengeDayKey, formatDuration } from '../time.js';
 import { getChallenge, packChallenge } from '../daily.js';
 import { templateById } from '../challenges.js';
 import { normalizeTemplate } from '../score.js';
-import { segmentsToXY, makeProjector, totalLength, fmtDeg } from '../geo.js';
+import { segmentsToXY, makeProjector, totalLength, fmtDeg, centroidLatLng } from '../geo.js';
 import { sfx } from '../sfx.js';
 import { GPS } from '../config.js';
 import { createLocateControl } from '../compass.js';
@@ -286,8 +286,11 @@ export default {
       const r = stage.getBoundingClientRect();
       const w = Math.max(32, Math.floor(r.width / 4)); const hh = Math.max(32, Math.floor((r.height - 56) / 4));
       if (sketchCv.width !== w || sketchCv.height !== hh) { sketchCv.width = w; sketchCv.height = hh; }
-      const xy = segmentsToXY(tracker.segments);
-      renderLayers(sketchCv, [{ strokes: xy, color: PAL.mint, thick: 1 }], { pad: 4 });
+      // 線と、PAUSE 中の移動（点線）を同じ原点で描く
+      const origin = centroidLatLng([...tracker.segments, ...tracker.moves]);
+      const xy = origin ? segmentsToXY(tracker.segments, origin) : [];
+      const mv = origin ? segmentsToXY(tracker.moves.filter((m) => m.length >= 2), origin) : [];
+      renderLayers(sketchCv, [{ strokes: mv, color: PAL.dim, thick: 1, dash: [1, 2] }, { strokes: xy, color: PAL.mint, thick: 1 }], { pad: 4 });
     };
 
     // ---- 表示更新 ----
@@ -314,11 +317,12 @@ export default {
         hintEl.textContent = '画面をつけたまま歩いてね。確認は立ち止まって。';
       } else if (st === 'paused') {
         btnRow.append(btn(`${icon('play')} RESUME`, () => { tracker.resume(); sfx.start(); }, 'btn-mint btn-xl'), btn(`${icon('flag')} FINISH`, onFinish, 'btn-pink btn-xl'));
-        hintEl.textContent = 'PAUSE 中の移動は線になりません。次の線の始点で RESUME。';
+        hintEl.textContent = 'PAUSE 中の移動は線にならず点線で残り、歩いた距離に入ります。次の線の始点で RESUME。';
       }
     };
     const refreshTrail = () => {
       map.setTrail(tracker.segments);
+      map.setMoves(tracker.moves);
       updateStats();
       if (view === 'sketch') drawSketch();
     };
@@ -388,7 +392,7 @@ export default {
           if (map.follow) map.setView(data, 17);
         }
         updateGps();
-      } else if (type === 'point') {
+      } else if (type === 'point' || type === 'move') {
         refreshTrail();
       } else if (type === 'state') {
         updateButtons();

@@ -1,5 +1,6 @@
 // GPS 計測（START / PAUSE / RESUME / FINISH）
 // ・PAUSE 中の移動は線にならない（再開すると新しいストロークになる）
+// ・PAUSE 中に歩いた道のりは moves（点線で表示）に記録し、歩いた距離（distance）に含める。採点・投稿には使わない
 // ・精度の悪い測位、静止時のブレ、瞬間移動（GPS の飛び）は捨てる
 // ・計測中のデータは端末内（localStorage）にだけ保存し、再読み込みしても続きから再開できる
 import { GPS } from './config.js';
@@ -9,6 +10,15 @@ const ACTIVE_KEY = 'nazca.active';
 const FINISHED_KEY = 'nazca.finished';
 
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
+
+// PAUSE 中の移動: 測位が 30 秒以上途切れたあと（画面が消えていた など）の 1 歩は、
+// 15 分以内・歩ける速さ（3 m/s 以下）のときだけ直線で数える（バス・電車などの移動を数えないため）
+const GAP_S = 30;
+const GAP_MAX_S = 900;
+const GAP_MAX_SPEED = 3;
+const MOVE_ALPHA = 0.3;        // PAUSE 中の位置のなめらかさ（小さいほどブレに強い）
+const MOVE_MIN_SPEED = 0.4;    // これより遅い「移動」は立ち止まっているときのブレとみなす（m/s）
+const MOVE_MAX_SPEED = 4;      // これより速い 1 歩は GPS の飛び（m/s）
 
 function loadJSON(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
@@ -35,7 +45,13 @@ export class Tracker {
     this.challenge = challenge; // { id, name, ja, strokes }（上書きお題でも採点できるよう保持）
     this.state = 'idle';
     this.segments = [];
-    this.distance = 0;
+    this.moves = [];          // PAUSE 中の移動（点線）。[[{lat, lng, t}, ...], ...]
+    this.moveOpen = false;    // いまの PAUSE の移動を記録中か
+    this.moveDistance = 0;    // そのうち PAUSE 中に歩いた距離
+    this.moveRejects = 0;
+    this.moveAnchor = null;   // PAUSE 中の距離を測る基準点
+    this.moveSmooth = null;   // PAUSE 中のなめらかにした位置
+    this.distance = 0;        // 歩いた距離（線 + PAUSE 中の移動）
     this.movingMs = 0;
     this.runStart = 0;
     this.startedAt = null;
@@ -56,6 +72,9 @@ export class Tracker {
   static restore(snap) {
     const t = new Tracker(snap);
     t.segments = (snap.segments || []).map((s) => s.slice());
+    // アプリを閉じていたあいだの移動はつながない（再開後の移動は新しい点線から）
+    t.moves = (snap.moves || []).map((s) => s.slice());
+    t.moveDistance = snap.moveDistance || 0;
     t.distance = snap.distance || 0;
     t.movingMs = snap.movingMs || 0;
     t.startedAt = snap.startedAt || Date.now();
@@ -90,9 +109,11 @@ export class Tracker {
 
   onPosition(pos) {
     const fix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, t: pos.timestamp || Date.now() };
+    const gapS = this.lastFix ? (fix.t - this.lastFix.t) / 1000 : Infinity;
     this.lastFix = fix;
     this.emit('fix', fix);
     if (this.state === 'tracking') this.add(fix);
+    else if (this.state === 'paused') this.addMove(fix, false, gapS);
   }
 
   /** 点を追加（force: シミュレータ用にフィルタを無視） */
@@ -113,11 +134,76 @@ export class Tracker {
       }
     }
     this.speedRejects = 0;
+    // 新しい線の始点で、PAUSE 中の移動（点線）を閉じる
+    if (!prev && this.moveOpen) this.closeMove(fix, force);
     this.distance += d;
     seg.push({ lat: r6(fix.lat), lng: r6(fix.lng), t: fix.t, acc: Math.round(fix.acc || 0) });
     this.persistSoon();
     this.emit('point', fix);
     return true;
+  }
+
+  /** PAUSE 中の移動を記録（線にはしない。歩いた距離には入れる）。gapS: 前の測位からの秒数 */
+  addMove(fix, force = false, gapS = 0) {
+    if (!force && fix.acc > GPS.maxAccuracy) { this.emit('weak', fix); return false; }
+    if (!this.moveOpen) { this.moves.push([]); this.moveOpen = true; this.moveAnchor = null; this.moveSmooth = null; }
+    const mv = this.moves[this.moves.length - 1];
+    // 位置を少しなめらかにして、立ち止まっているときの GPS のブレで距離が増えないようにする
+    let lat = fix.lat; let lng = fix.lng;
+    if (!force) {
+      const sm = this.moveSmooth;
+      if (sm && gapS <= GAP_S) { sm.lat += (fix.lat - sm.lat) * MOVE_ALPHA; sm.lng += (fix.lng - sm.lng) * MOVE_ALPHA; }
+      else this.moveSmooth = { lat: fix.lat, lng: fix.lng };
+      ({ lat, lng } = this.moveSmooth);
+    }
+    const pt = { lat: r6(lat), lng: r6(lng), t: fix.t };
+    const anchor = this.moveAnchor || mv[mv.length - 1];
+    if (!anchor) { mv.push(pt); this.moveAnchor = pt; this.persistSoon(); return true; }
+    const d = haversine(anchor, pt);
+    let kind = 'ok';
+    if (!force) {
+      const dt = Math.max(0.5, (fix.t - anchor.t) / 1000);
+      if (d < Math.max(GPS.minStep, Math.min(25, fix.acc || 0))) return false;
+      if (gapS > GAP_S) kind = dt <= GAP_MAX_S && d / dt <= GAP_MAX_SPEED ? 'ok' : 'jump';   // 測位が途切れていた
+      else if (d / dt > MOVE_MAX_SPEED) kind = 'spike';     // GPS の飛び（続くなら乗り物）
+      else if (d / dt < MOVE_MIN_SPEED) kind = 'drift';     // 立ち止まっているときのブレ
+    }
+    if (kind === 'spike' && ++this.moveRejects < 4) return false;
+    this.moveRejects = 0;
+    if (kind === 'drift') { this.moveAnchor = pt; return false; }
+    if (kind === 'spike' || kind === 'jump') {
+      // 乗り物などで本当に移動した → 距離には入れず、ここから点線を引き直す
+      this.moves.push([pt]);
+      this.moveAnchor = pt;
+      this.persistSoon();
+      this.emit('move', fix);
+      return true;
+    }
+    this.distance += d;
+    this.moveDistance += d;
+    mv.push(pt);
+    this.moveAnchor = pt;
+    this.persistSoon();
+    this.emit('move', fix);
+    return true;
+  }
+
+  /** 次の線の始点まで点線をつなぎ、PAUSE 中の移動を終える */
+  closeMove(fix, force = false) {
+    this.moveOpen = false;
+    this.moveRejects = 0;
+    const mv = this.moves[this.moves.length - 1];
+    const anchor = this.moveAnchor || (mv && mv[mv.length - 1]);
+    this.moveAnchor = null; this.moveSmooth = null;
+    if (!mv || !anchor) return;
+    const d = haversine(anchor, fix);
+    if (d < 0.5) return;
+    const dt = Math.max(0.5, (fix.t - anchor.t) / 1000);
+    // 近いならそのままつなぐ。遠いときは歩ける速さ・時間のときだけ（乗り物の移動はつながない・数えない）
+    if (!force && d > 25 && !(dt <= GAP_MAX_S && d / dt <= GAP_MAX_SPEED)) return;
+    mv.push({ lat: r6(fix.lat), lng: r6(fix.lng), t: fix.t });
+    this.distance += d;
+    this.moveDistance += d;
   }
 
   freshFix() {
@@ -144,6 +230,17 @@ export class Tracker {
     if (this.state !== 'tracking') return;
     this.movingMs += Date.now() - this.runStart;
     this.state = 'paused';
+    // PAUSE 中の移動（点線）を、いま描いていた線の終わりから始める
+    if (!this.moveOpen) {
+      const seg = this.segments[this.segments.length - 1];
+      const last = seg && seg[seg.length - 1];
+      const seed = last ? { lat: last.lat, lng: last.lng, t: last.t } : null;
+      this.moves.push(seed ? [seed] : []);
+      this.moveOpen = true;
+      this.moveAnchor = seed;
+      this.moveSmooth = null;
+      this.moveRejects = 0;
+    }
     this.persist();
     this.emit('state', this.state);
   }
@@ -167,6 +264,8 @@ export class Tracker {
     this.state = 'finished';
     this.endedAt = Date.now();
     this.segments = this.segments.filter((s) => s.length >= 2);
+    this.moves = this.moves.filter((s) => s.length >= 2);
+    this.moveOpen = false;
     this.dispose();
     activeTrack.clear();
     this.emit('state', this.state);
@@ -189,7 +288,9 @@ export class Tracker {
       challengeId: this.challengeId,
       challenge: this.challenge,
       segments: this.segments,
+      moves: this.moves,
       distance: Math.round(this.distance),
+      moveDistance: Math.round(this.moveDistance),
       movingMs: this.elapsed(),
       startedAt: this.startedAt,
       endedAt: this.endedAt,
@@ -224,6 +325,7 @@ export class Tracker {
     this.lastFix = fix;
     this.emit('fix', fix);
     if (this.state === 'tracking') this.add(fix, true);
+    else if (this.state === 'paused') this.addMove(fix, true);
   }
 
   /** 緯度経度の折れ線（複数）に沿って擬似的に歩く。ストロークの間は自動で PAUSE する。 */

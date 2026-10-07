@@ -105,6 +105,7 @@ export function normDeg(d) {
 
 const C_TRAIL = pack(PAL.mint);
 const C_TRAIL_SH = pack('#06121a');
+const C_MOVE = pack(PAL.mint, 210);       // PAUSE 中の移動（点線）
 const C_GUIDE = pack(PAL.pink);
 const C_ME = pack(PAL.ink);
 const C_ME_IN = pack(PAL.pink);
@@ -133,7 +134,7 @@ export class PixelMap {
     this.rotatable = rotate;
     this.snapNorth = snapNorth;
     this.showFlag = flag;
-    this.trail = []; this.guide = null; this.me = null; this.meHeading = null;
+    this.trail = []; this.moves = []; this.guide = null; this.me = null; this.meHeading = null;
     this.follow = false;
     this.onUserMove = null; this.onTap = null; this.onViewChange = null;
     this.onDrawOverlay = null; this.onAfterRender = null; this.onCompass = null;
@@ -388,6 +389,8 @@ export class PixelMap {
   }
 
   setTrail(segments) { this.trail = segments || []; this.requestRender(); }
+  /** PAUSE 中の移動（線にならない道のり）を点線で表示 */
+  setMoves(moves) { this.moves = moves || []; this.requestRender(); }
   setGuide(strokes) { this.guide = strokes; this.requestRender(); }
   setMe(fix) {
     this.me = fix;
@@ -527,6 +530,12 @@ export class PixelMap {
 
     if (this.guide) {
       for (const s of this.guide) buf.polyline(s.map(toPx), C_GUIDE, 1, [3, 2]);
+    }
+    for (const s of this.moves) {
+      if (s.length < 2) continue;
+      const pts = s.map(toPx);
+      buf.polyline(pts.map(([x, y]) => [x + 1, y + 1]), C_TRAIL_SH, 1, [1, 2]);
+      buf.polyline(pts, C_MOVE, 1, [1, 2]);
     }
     const trail = this.trail.filter((s) => s.length);
     for (const s of trail) {
