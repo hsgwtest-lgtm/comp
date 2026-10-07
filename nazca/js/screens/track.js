@@ -296,7 +296,7 @@ export default {
     // ---- 表示更新 ----
     const updateStats = () => {
       distEl.textContent = String(Math.round(tracker.distance));
-      timeEl.textContent = formatDuration(tracker.elapsed());
+      timeEl.textContent = formatDuration(tracker.totalElapsed());   // PAUSE 中に歩いていた時間も含む
       ptsEl.textContent = String(tracker.pointCount);
     };
     const updateGps = () => {

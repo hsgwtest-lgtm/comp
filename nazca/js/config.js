@@ -31,7 +31,7 @@ export const FIREBASE_CONFIG = {
 // gstatic CDN から読み込む Firebase JS SDK のバージョン
 export const FIREBASE_SDK_VERSION = '12.19.0';
 
-export const APP_VERSION = '2.3.1';
+export const APP_VERSION = '2.3.2';
 
 // デイリーチャレンジの切替時刻（日本時間）
 export const TZ_OFFSET_MIN = 9 * 60;   // JST = UTC+9

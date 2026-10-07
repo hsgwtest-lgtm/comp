@@ -25,6 +25,8 @@ export default {
     const kind = f.kind;
     const tpl = kind === 'daily' ? (f.challenge || templateById(f.challengeId)) : null;
     const xy = segmentsToXY(f.segments);
+    // TIME = 線を描いていた時間 + PAUSE 中に歩いていた時間（v2.3.2 より前の作品は moveMs なし）
+    const totalMs = (f.movingMs || 0) + (f.moveMs || 0);
     const debug = isDebug();
     // デバッグモードの &odai= で描いた作品は投稿しない（ランキング・笑顔の回数の対象外）
     const debugOdai = !!(tpl && tpl.debug);
@@ -92,7 +94,8 @@ export default {
       h('div', {}, h('label', {}, 'DIST'), h('b', {}, `${Math.round(f.distance).toLocaleString()}`), h('i', {}, 'm'),
         // PAUSE 中に歩いた分も距離に入っている（線にはならない）
         f.moveDistance >= 1 ? h('small', { class: 'dist-move' }, `うち PAUSE 中 ${Math.round(f.moveDistance).toLocaleString()}m`) : null),
-      h('div', {}, h('label', {}, 'TIME'), h('b', {}, formatDuration(f.movingMs))),
+      h('div', {}, h('label', {}, 'TIME'), h('b', {}, formatDuration(totalMs)),
+        f.moveMs >= 1000 ? h('small', { class: 'dist-move' }, `うち PAUSE 中 ${formatDuration(f.moveMs)}`) : null),
       tpl ? h('div', {}, h('label', {}, 'ODAI'), h('b', { class: 'jp' }, tpl.ja)) : null);
 
     const notes = h('div', { class: 'res-notes' });
@@ -482,7 +485,7 @@ export default {
         name,
         publish,
         distance: Math.round(f.distance),
-        duration: Math.round(f.movingMs / 1000),
+        duration: Math.round(totalMs / 1000),
         shape,
         v: 1,
       };

@@ -1,6 +1,7 @@
 // GPS 計測（START / PAUSE / RESUME / FINISH）
 // ・PAUSE 中の移動は線にならない（再開すると新しいストロークになる）
 // ・PAUSE 中に歩いた道のりは moves（点線で表示）に記録し、歩いた距離（distance）に含める。採点・投稿には使わない
+// ・PAUSE 中に歩いていた時間（moveMs）も TIME に含める。立ち止まっている時間・アプリを閉じていた時間は入らない
 // ・精度の悪い測位、静止時のブレ、瞬間移動（GPS の飛び）は捨てる
 // ・計測中のデータは端末内（localStorage）にだけ保存し、再読み込みしても続きから再開できる
 import { GPS } from './config.js';
@@ -19,6 +20,9 @@ const GAP_MAX_SPEED = 3;
 const MOVE_ALPHA = 0.3;        // PAUSE 中の位置のなめらかさ（小さいほどブレに強い）
 const MOVE_MIN_SPEED = 0.4;    // これより遅い「移動」は立ち止まっているときのブレとみなす（m/s）
 const MOVE_MAX_SPEED = 4;      // これより速い 1 歩は GPS の飛び（m/s）
+// PAUSE 中に歩いていた時間: 1 歩にかかった時間。ただしその距離をゆっくり歩いた時間（0.4 m/s）までにして、
+// 立ち止まっていた時間（信号待ち・休憩）が入らないようにする
+const walkMs = (d, dt) => Math.min(dt, d / MOVE_MIN_SPEED) * 1000;
 
 function loadJSON(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
@@ -48,6 +52,7 @@ export class Tracker {
     this.moves = [];          // PAUSE 中の移動（点線）。[[{lat, lng, t}, ...], ...]
     this.moveOpen = false;    // いまの PAUSE の移動を記録中か
     this.moveDistance = 0;    // そのうち PAUSE 中に歩いた距離
+    this.moveMs = 0;          // PAUSE 中に歩いていた時間
     this.moveRejects = 0;
     this.moveAnchor = null;   // PAUSE 中の距離を測る基準点
     this.moveSmooth = null;   // PAUSE 中のなめらかにした位置
@@ -75,6 +80,7 @@ export class Tracker {
     // アプリを閉じていたあいだの移動はつながない（再開後の移動は新しい点線から）
     t.moves = (snap.moves || []).map((s) => s.slice());
     t.moveDistance = snap.moveDistance || 0;
+    t.moveMs = snap.moveMs || 0;
     t.distance = snap.distance || 0;
     t.movingMs = snap.movingMs || 0;
     t.startedAt = snap.startedAt || Date.now();
@@ -87,8 +93,14 @@ export class Tracker {
 
   get pointCount() { return this.segments.reduce((a, s) => a + s.length, 0); }
 
+  /** 線を描いていた時間（PAUSE を除く） */
   elapsed() {
     return this.movingMs + (this.state === 'tracking' ? Date.now() - this.runStart : 0);
+  }
+
+  /** TIME: 線を描いていた時間 + PAUSE 中に歩いていた時間 */
+  totalElapsed() {
+    return this.elapsed() + this.moveMs;
   }
 
   // ---- 位置情報 -------------------------------------------------------
@@ -160,13 +172,14 @@ export class Tracker {
     const anchor = this.moveAnchor || mv[mv.length - 1];
     if (!anchor) { mv.push(pt); this.moveAnchor = pt; this.persistSoon(); return true; }
     const d = haversine(anchor, pt);
+    const dt = Math.max(0, (fix.t - anchor.t) / 1000);
     let kind = 'ok';
     if (!force) {
-      const dt = Math.max(0.5, (fix.t - anchor.t) / 1000);
       if (d < Math.max(GPS.minStep, Math.min(25, fix.acc || 0))) return false;
-      if (gapS > GAP_S) kind = dt <= GAP_MAX_S && d / dt <= GAP_MAX_SPEED ? 'ok' : 'jump';   // 測位が途切れていた
-      else if (d / dt > MOVE_MAX_SPEED) kind = 'spike';     // GPS の飛び（続くなら乗り物）
-      else if (d / dt < MOVE_MIN_SPEED) kind = 'drift';     // 立ち止まっているときのブレ
+      const v = d / Math.max(0.5, dt);
+      if (gapS > GAP_S) kind = dt <= GAP_MAX_S && v <= GAP_MAX_SPEED ? 'ok' : 'jump';   // 測位が途切れていた
+      else if (v > MOVE_MAX_SPEED) kind = 'spike';     // GPS の飛び（続くなら乗り物）
+      else if (v < MOVE_MIN_SPEED) kind = 'drift';     // 立ち止まっているときのブレ
     }
     if (kind === 'spike' && ++this.moveRejects < 4) return false;
     this.moveRejects = 0;
@@ -181,6 +194,7 @@ export class Tracker {
     }
     this.distance += d;
     this.moveDistance += d;
+    this.moveMs += walkMs(d, dt);
     mv.push(pt);
     this.moveAnchor = pt;
     this.persistSoon();
@@ -198,12 +212,13 @@ export class Tracker {
     if (!mv || !anchor) return;
     const d = haversine(anchor, fix);
     if (d < 0.5) return;
-    const dt = Math.max(0.5, (fix.t - anchor.t) / 1000);
+    const dt = Math.max(0, (fix.t - anchor.t) / 1000);
     // 近いならそのままつなぐ。遠いときは歩ける速さ・時間のときだけ（乗り物の移動はつながない・数えない）
-    if (!force && d > 25 && !(dt <= GAP_MAX_S && d / dt <= GAP_MAX_SPEED)) return;
+    if (!force && d > 25 && !(dt <= GAP_MAX_S && d / Math.max(0.5, dt) <= GAP_MAX_SPEED)) return;
     mv.push({ lat: r6(fix.lat), lng: r6(fix.lng), t: fix.t });
     this.distance += d;
     this.moveDistance += d;
+    this.moveMs += walkMs(d, dt);
   }
 
   freshFix() {
@@ -291,6 +306,7 @@ export class Tracker {
       moves: this.moves,
       distance: Math.round(this.distance),
       moveDistance: Math.round(this.moveDistance),
+      moveMs: Math.round(this.moveMs),
       movingMs: this.elapsed(),
       startedAt: this.startedAt,
       endedAt: this.endedAt,

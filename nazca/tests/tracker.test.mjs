@@ -1,4 +1,4 @@
-// 計測の単体テスト（PAUSE 中の移動を歩いた距離に数える）: node tests/tracker.test.mjs
+// 計測の単体テスト（PAUSE 中に歩いた距離と時間を数える）: node tests/tracker.test.mjs
 // ブラウザの API（document・navigator・localStorage）と時計はスタブ。GPS の測位は 1 秒ごとに手で入れる。
 globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'hidden' };
 Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
@@ -37,6 +37,9 @@ const check = (name, ok, info) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}
   check('stroke-move-stroke distance', Math.abs(f.distance - 153) <= 6, `distance ${f.distance} (move ${f.moveDistance})`);
   check('move ≈ 53m', Math.abs(f.moveDistance - 53) <= 5, `moveDistance ${f.moveDistance}`);
   check('2 strokes, 1 move', f.segments.length === 2 && f.moves.length === 1, `segments ${f.segments.length} moves ${f.moves.length}`);
+  // TIME: 線 36 秒 + PAUSE 中に歩いた 36 秒 + 線 36 秒（PAUSE 中の時間も入る）
+  check('PAUSE walking time ≈ 36s', Math.abs(f.moveMs / 1000 - 37) <= 5, `moveMs ${R(f.moveMs / 1000)}s`);
+  check('TIME = drawing + PAUSE walking', Math.abs((f.movingMs + f.moveMs) / 1000 - 110) <= 6, `drawing ${R(f.movingMs / 1000)}s + pause ${R(f.moveMs / 1000)}s`);
   const mv = f.moves[0]; const s0 = f.segments[0]; const s1 = f.segments[1];
   check('move starts at stroke end', mv[0].lat === s0[s0.length - 1].lat && mv[0].lng === s0[s0.length - 1].lng, '');
   check('move ends at next stroke start', mv[mv.length - 1].lat === s1[0].lat && mv[mv.length - 1].lng === s1[0].lng, '');
@@ -49,6 +52,10 @@ const check = (name, ok, info) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}
   t.pause();
   for (let i = 0; i < 300; i++) { NOW += 1000; t.onPosition(fix(10, 5)); }
   check('standing still in PAUSE adds little', t.moveDistance < 25, `moveDistance ${R(t.moveDistance)}m in 5 min`);
+  check('standing still in PAUSE adds no time', t.moveMs < 15000, `moveMs ${R(t.moveMs / 1000)}s in 5 min`);
+  const before = t.totalElapsed();
+  NOW += 60000; t.onPosition(fix(10, 5));
+  check('TIME does not tick while resting in PAUSE', t.totalElapsed() - before < 15000, `+${R((t.totalElapsed() - before) / 1000)}s`);
 }
 // 2b) PAUSE 中に立ち止まる（ゆっくりさまよう誤差 ±8m・10 分）
 {
@@ -75,6 +82,7 @@ const check = (name, ok, info) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}
   t.onPosition(fix()); t.start(); walk(t, 30, 0);
   t.pause(); NOW += 300000; x += 400; t.onPosition(fix());
   check('screen-off walk gap counted', Math.abs(t.moveDistance - 400) < 3, `moveDistance ${R(t.moveDistance)}`);
+  check('screen-off walk time counted', Math.abs(t.moveMs / 1000 - 300) < 2, `moveMs ${R(t.moveMs / 1000)}s`);
 }
 // 4) 10 分で 5km（バス・電車）→ 数えない、点線も引き直し
 {
@@ -84,6 +92,7 @@ const check = (name, ok, info) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}
   t.pause(); NOW += 600000; x += 5000; t.onPosition(fix());
   walk(t, 0, 25);
   check('vehicle gap not counted', t.moveDistance < 30, `moveDistance ${R(t.moveDistance)} moves ${t.moves.length}`);
+  check('vehicle time not counted', t.moveMs < 30000, `moveMs ${R(t.moveMs / 1000)}s`);
   check('vehicle gap starts a new dotted line', t.moves.length === 2, `moves ${t.moves.length}`);
   t.resume(); walk(t, 25, 0);
   check('resume after vehicle: no connection across the gap', t.moves[0].length === 1, `first move points ${t.moves[0].length}`);
@@ -113,10 +122,11 @@ const check = (name, ok, info) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}
   t.onPosition(fix()); t.start(); walk(t, 30, 0); t.pause(); walk(t, 0, 20);
   const snap = t.snapshot(); t.dispose();
   const r = Tracker.restore(snap);
-  check('restore keeps moves and moveDistance', r.moves.length === 1 && Math.abs(r.moveDistance - snap.moveDistance) < 1, `moves ${r.moves.length} moveDistance ${r.moveDistance}`);
+  check('restore keeps moves and moveDistance', r.moves.length === 1 && Math.abs(r.moveDistance - snap.moveDistance) < 1 && r.moveMs === snap.moveMs, `moves ${r.moves.length} moveDistance ${r.moveDistance} moveMs ${r.moveMs}`);
   NOW += 200000; x += 250; r.onPosition(fix());       // 3 分後・250m 先（アプリは閉じていた）
   walk(r, 15, 0); NOW += 1000; r.onPosition(fix()); r.resume();
   check('no connection across app restart', Math.abs(r.moveDistance - snap.moveDistance - 15) <= 6 && r.moves.length === 2, `moveDistance ${R(r.moveDistance)} (before ${snap.moveDistance}) moves ${r.moves.length}`);
+  check('app-closed time not counted', (r.moveMs - snap.moveMs) / 1000 < 20, `+${R((r.moveMs - snap.moveMs) / 1000)}s while the app was closed 200s`);
 }
 // 8) RESUME したときに新しい位置がまだない → 最初の点で点線を閉じる
 {
