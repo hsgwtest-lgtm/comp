@@ -22,6 +22,9 @@ export async function getChallenge(dayKey = challengeDayKey()) {
   return result;
 }
 
+/** 計測中の端末内データに入れるお題（tracker → localStorage → result と受け渡す。theme も落とさない） */
 export function packChallenge(t) {
-  return { id: t.id, name: t.name, ja: t.ja, strokes: t.strokes };
+  const c = { id: t.id, name: t.name, ja: t.ja, strokes: t.strokes };
+  if (t.theme === 'smile') c.theme = 'smile';
+  return c;
 }

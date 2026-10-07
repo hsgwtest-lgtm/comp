@@ -5,7 +5,8 @@ import { scoreTrack, totalPoints } from '../score.js';
 import { bboxOf } from '../geo.js';
 
 const UID_KEY = 'nazca.uid';
-const POSTS_KEY = { daily: 'nazca.local.daily', free: 'nazca.local.free' };
+const POSTS_KEY = { daily: 'nazca.local.daily', free: 'nazca.local.free', smile: 'nazca.local.smile' };
+const LOG_KEY = 'nazca.local.smileLog';   // 笑顔の回数の記録（追記のみ。投稿を消しても残る）
 const REACT_KEY = 'nazca.local.reactions';
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d; } catch { return d; } };
@@ -130,6 +131,26 @@ export function createLocalStore() {
       return [...load(POSTS_KEY.daily, []), ...load(POSTS_KEY.free, [])]
         .filter((p) => p.publish === 'map' && p.geo && p.geo.length)
         .map(withReactions);
+    },
+    /** 撮影した笑顔（新しい順） */
+    async listSmiles(n = 60) {
+      return load(POSTS_KEY.smile, []).sort((a, b) => b.createdAt - a.createdAt).slice(0, n).map(withReactions);
+    },
+    /** EXPLORE 用: MAP 公開の笑顔 */
+    async listSmileMapPosts() {
+      return load(POSTS_KEY.smile, []).filter((p) => p.publish === 'map' && p.pos).map(withReactions);
+    },
+    /** 笑顔の回数の記録（Firestore の smile_log と同じ形。ID = 投稿 ID。すでにあれば何もしない） */
+    async logSmile({ type, refId, dayKey = null }) {
+      const log = load(LOG_KEY, {});
+      if (!log[refId]) {
+        log[refId] = { uid, type, refId, ...(dayKey ? { dayKey } : {}), createdAt: Date.now() };
+        save(LOG_KEY, log);
+      }
+      return 'ok';
+    },
+    async listSmileLog() {
+      return Object.values(load(LOG_KEY, {})).sort((a, b) => a.createdAt - b.createdAt);
     },
     async react(kind, id, stamp, on) {
       const all = reactions();

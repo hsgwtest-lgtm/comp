@@ -2,7 +2,7 @@
 // アプリ本体（同一オリジンのファイル）を事前キャッシュしてオフラインでも起動できるようにする。
 // 地図タイル・Firebase など外部への通信には関与しない。
 // ★ ファイルを更新したら VERSION を上げること（README 参照）
-const VERSION = 'nazca-v2.2.0';
+const VERSION = 'nazca-v2.3.0';
 
 const PRECACHE = [
   './',
@@ -17,6 +17,7 @@ const PRECACHE = [
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png',
   './icons/favicon-32.png',
+  './icons/shortcut-cam.png',
   './js/main.js',
   './js/config.js',
   './js/router.js',
@@ -27,6 +28,7 @@ const PRECACHE = [
   './js/daily.js',
   './js/geo.js',
   './js/score.js',
+  './js/smilepix.js',
   './js/pixel.js',
   './js/pixelmap.js',
   './js/tracker.js',
@@ -42,6 +44,7 @@ const PRECACHE = [
   './js/screens/gallery.js',
   './js/screens/detail.js',
   './js/screens/explore.js',
+  './js/screens/cam.js',
 ];
 
 self.addEventListener('install', (e) => {

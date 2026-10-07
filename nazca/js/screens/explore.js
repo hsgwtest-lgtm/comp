@@ -5,6 +5,7 @@
 // ・RADAR：未発見の地上絵の方向に矢印と距離を出す
 // ・現在地を追いかけ、コンパスで地図を進行方向に回せる。実際にその場所へ歩いて行くと VISITED
 // ・世界中に本物の地上絵が 40 か所。ATLAS（図鑑）で一覧・解説、近くまで WARP もできる
+// ・SMILE CAM で MAP 公開された写真は、顔のピンで表示（別レイヤー。SIGNAL / RADAR / FOUND / ATLAS の対象外。ON / OFF できる）
 import { h, btn, scope, toast, modal, closeAllModals } from '../ui.js';
 import { icon, PAL, pack, makePixelCanvas, renderLayers } from '../pixel.js';
 import { PixelMap, normDeg, merc, unmerc } from '../pixelmap.js';
@@ -12,7 +13,7 @@ import { navigate } from '../router.js';
 import { store } from '../store/index.js';
 import { unpackGeo, unpackFlat, haversine, distToSegments, boundsCenter, segmentsToXY } from '../geo.js';
 import { ANCIENT, TYPE_LABEL, GROUP_NOTE, ANCIENT_FOOT, COUNTRY_ORDER, ancientSegments } from '../ancient.js';
-import { openDetail } from './detail.js';
+import { openDetail, FACE_PIN, FACE_PIN_TIP } from './detail.js';
 import { formatStamp } from '../time.js';
 import { postPoints, fmtPts } from '../score.js';
 import { sfx } from '../sfx.js';
@@ -25,6 +26,7 @@ const VIEW_KEY = 'nazca.exploreView';
 const INTRO_KEY = 'nazca.exploreIntro';
 const RADAR_KEY = 'nazca.radar';
 const WORLD_KEY = 'nazca.worldIntro';
+const SMILE_PIN_KEY = 'nazca.smilePins';   // 写真のピンの表示（'0' で OFF）
 const REVEAL_PX = 72;      // 画面上でこの大きさ（CSS px）以上に映ったら「発見」
 const VISIT_M = 35;        // この距離まで近づいたら「訪問」
 const RADAR_N = 4;         // RADAR で矢印を出す数
@@ -41,6 +43,8 @@ const C_ARROW_SH = pack('#2a0614');
 const C_Q = pack(PAL.pink);
 const C_RET = pack(PAL.dim, 200);
 const GEM = ['..#..', '.###.', '#####', '.###.', '..#..'];
+const PIN_COL = { '#': pack(PAL.gold), o: C_OUTLINE, k: pack('#2a1606') };
+const PIN_MINE = { '#': pack(PAL.mint), o: C_OUTLINE, k: pack('#06241c') };
 const QMARK = ['.###.', '#...#', '...#.', '..#..', '..#..', '.....', '..#..'];
 
 const loadSet = (k) => { try { return new Set(JSON.parse(localStorage.getItem(k) || '[]')); } catch { return new Set(); } };
@@ -119,6 +123,8 @@ export default {
     const visited = loadSet(VISIT_KEY);
     const revealing = new Map();   // id → 開始時刻
     const glyphs = [];
+    const smiles = [];             // MAP 公開の写真（地上絵とは別のレイヤー）
+    let smileOn = (() => { try { return localStorage.getItem(SMILE_PIN_KEY) !== '0'; } catch { return true; } })();
     let radarOn = (() => { try { return localStorage.getItem(RADAR_KEY) === '1'; } catch { return false; } })();
     let discovering = null;
     let lastBars = -1;
@@ -138,6 +144,8 @@ export default {
     const signalEl = h('div', { class: 'signal', role: 'status' });
     const radarBtn = h('button', { type: 'button', class: 'tool-btn tool-radar', 'aria-pressed': 'false' });
     const locBtn = h('button', { type: 'button', class: 'tool-btn', 'aria-label': '現在地', html: icon('locate') });
+    // 写真のピンの表示切り替え（地図の +/- の下に置く）
+    const smileBtn = h('button', { type: 'button', class: 'pmap-btn pmap-smile', 'aria-label': '見つけた笑顔（写真のピン）の表示', html: icon('face') });
     const cardSlot = h('div', { class: 'card-slot' });
     stage.append(mapEl, labels,
       h('div', { class: 'stage-tools explore-tools' }, radarBtn, signalEl, h('div', { class: 'grow' }), atlasBtn, locBtn),
@@ -158,6 +166,9 @@ export default {
       bearing: saved ? saved.bearing || 0 : 0,
     });
 
+    const ctlCol = mapEl.querySelector('.pmap-ctl');
+    if (ctlCol) ctlCol.append(smileBtn); else stage.append(smileBtn);
+
     const updateCounters = () => {
       const nFound = glyphs.filter((g) => found.has(g.id)).length;
       const nVisit = glyphs.filter((g) => visited.has(g.id)).length;
@@ -169,6 +180,18 @@ export default {
       radarBtn.classList.toggle('on', radarOn);
       radarBtn.setAttribute('aria-pressed', String(radarOn));
     };
+    const updateSmileBtn = () => {
+      smileBtn.classList.toggle('on', smileOn);
+      smileBtn.setAttribute('aria-pressed', String(smileOn));
+    };
+    smileBtn.addEventListener('click', () => {
+      smileOn = !smileOn;
+      try { localStorage.setItem(SMILE_PIN_KEY, smileOn ? '1' : '0'); } catch { /* noop */ }
+      sfx.blip();
+      updateSmileBtn();
+      toast(smileOn ? `見つけた笑顔のピン ON（${smiles.length}）` : '見つけた笑顔のピン OFF', 1600);
+      map.requestRender();
+    });
     radarBtn.addEventListener('click', () => {
       radarOn = !radarOn;
       try { localStorage.setItem(RADAR_KEY, radarOn ? '1' : '0'); } catch { /* noop */ }
@@ -249,6 +272,16 @@ export default {
           if (frac < 1) animating = true; else revealing.delete(g.id);
         }
         drawGlyph(buf, g, du, frac, col);
+      }
+
+      // 見つけた笑顔（写真のピン）
+      if (smileOn) {
+        for (const sp of smiles) {
+          const du = Math.round(f.uc - sp.u);
+          const [x, y] = map.mercToScreen(sp.u + du, sp.v);
+          if (x < -24 || y < -8 || x > map.cssW + 24 || y > map.cssH + 32) continue;
+          buf.sprite(Math.round(x / k) - FACE_PIN_TIP[0], Math.round(y / k) - FACE_PIN_TIP[1], FACE_PIN, sp.mine ? PIN_MINE : PIN_COL);
+        }
       }
 
       // 照準（画面中央）
@@ -487,6 +520,22 @@ export default {
     map.onTap = (ll, p) => {
       if (!p) return;
       const f = map.frame();
+      // 写真のピン（顔の中心は先端の 7 ドット上）を優先
+      if (smileOn) {
+        let pick = null; let pd = 18;
+        for (const sp of smiles) {
+          const [x, y] = map.mercToScreen(sp.u + Math.round(f.uc - sp.u), sp.v);
+          const d = Math.hypot(x - p[0], y - 7 * map.scale - p[1]);
+          if (d < pd) { pd = d; pick = sp; }
+        }
+        if (pick) {
+          sfx.blip();
+          openDetail(pick.post).then((r) => {
+            if (r && r.deleted) { const i = smiles.indexOf(pick); if (i >= 0) smiles.splice(i, 1); map.requestRender(); }
+          });
+          return;
+        }
+      }
       let best = null; let bestD = 16;
       for (const g of glyphs) {
         if (!found.has(g.id)) continue;
@@ -570,7 +619,7 @@ export default {
 
     // ---- データ ----
     for (const a of ANCIENT) glyphs.push(makeGlyph(`ancient/${a.id}`, 'ancient', ancientSegments(a), { ancient: a }));
-    updateRadarBtn(); updateCounters();
+    updateRadarBtn(); updateSmileBtn(); updateCounters();
 
     let alive = true;
     const loadPosts = async () => {
@@ -596,6 +645,19 @@ export default {
       map.requestRender();
     };
     loadPosts();
+    // 見つけた笑顔（MAP 公開の写真）。読み込めなくても地上絵の遊びには影響させない
+    const loadSmiles = async () => {
+      let list = [];
+      try { list = s.listSmileMapPosts ? await s.listSmileMapPosts() : []; } catch (e) { console.warn('smile pins not loaded', e && (e.code || e.message)); return; }
+      if (!alive) return;
+      for (const p of list) {
+        if (!p.pos || !Number.isFinite(p.pos.lat) || !Number.isFinite(p.pos.lng)) continue;
+        const [u, v] = merc(p.pos.lat, p.pos.lng);
+        smiles.push({ post: p, u, v, mine: !!(p.uid && p.uid === s.uid) });
+      }
+      map.requestRender();
+    };
+    loadSmiles();
 
     // 初回は遊び方 → 現在地へ
     let firstTime = false;
@@ -609,6 +671,7 @@ export default {
           <h3>${icon('radar')} SIGNAL と RADAR</h3><p>SIGNAL のバーは、いちばん近い未発見の地上絵ほど増えます。RADAR をオンにすると方向と距離がわかります。</p>
           <h3>${icon('walk')} 訪れる</h3><p>${icon('locate')} で現在地へ。もう一度押すとコンパスで地図が進行方向に回ります。実際にその場所まで歩いて行くと VISITED。</p>
           <h3>${icon('book')} 世界の地上絵</h3><p>ナスカだけでなく、世界中に本物の地上絵が ${ANCIENT.length} か所眠っています。見つけると歴史や雑学が読めます。ATLAS から近くまで WARP もできます。</p>
+          <h3>${icon('face')} 見つけた笑顔</h3><p>SMILE CAM で MAP 公開された写真は、顔のピンで表示されます。${icon('face')} ボタンで表示を切り替えられます。</p>
         </div>`,
         cls: 'modal-wide',
       }), 300);

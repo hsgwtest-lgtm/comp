@@ -1,22 +1,41 @@
 // 2. TRACKING（計測画面）
-import { h, btn, holdBtn, scope, toast, modal, confirmDialog } from '../ui.js';
+import { h, btn, holdBtn, scope, toast, modal, confirmDialog, smileTag } from '../ui.js';
 import { icon, makePixelCanvas, renderLayers, PAL, pack } from '../pixel.js';
 import { PixelMap, normDeg } from '../pixelmap.js';
 import { Tracker, activeTrack, finishedTrack } from '../tracker.js';
 import { navigate } from '../router.js';
 import { challengeDayKey, formatDuration } from '../time.js';
 import { getChallenge, packChallenge } from '../daily.js';
+import { templateById } from '../challenges.js';
 import { normalizeTemplate } from '../score.js';
 import { segmentsToXY, makeProjector, totalLength, fmtDeg } from '../geo.js';
 import { sfx } from '../sfx.js';
 import { GPS } from '../config.js';
 import { createLocateControl } from '../compass.js';
+import { openCamOverlay } from './cam.js';
 
 export function isDebug() {
   try {
     if (new URLSearchParams(location.search).has('debug')) sessionStorage.setItem('nazca.debug', '1');
     return sessionStorage.getItem('nazca.debug') === '1';
   } catch { return false; }
+}
+
+/**
+ * デバッグモードのときだけ、URL の &odai=smile-05 でお題を差し替える（タブを閉じるまで覚える。&odai= で解除）。
+ * このお題で描いた作品は投稿できない（ランキング・集計の対象外）。
+ */
+export function debugOdai() {
+  if (!isDebug()) return null;
+  try {
+    const q = new URLSearchParams(location.search).get('odai');
+    if (q != null) {
+      if (q && templateById(q)) sessionStorage.setItem('nazca.debugOdai', q);
+      else sessionStorage.removeItem('nazca.debugOdai');
+    }
+    const t = templateById(sessionStorage.getItem('nazca.debugOdai') || '');
+    return t ? { ...packChallenge(t), debug: true } : null;
+  } catch { return null; }
 }
 
 const GUIDE_KEY = 'nazca.guide';
@@ -49,7 +68,7 @@ export default {
       tpl = snap.challenge || null;
     } else if (kind === 'daily') {
       const dk = challengeDayKey();
-      tpl = packChallenge(await getChallenge(dk));
+      tpl = debugOdai() || packChallenge(await getChallenge(dk));
       tracker = new Tracker({ kind, dayKey: dk, challengeId: tpl.id, challenge: tpl });
     } else {
       tracker = new Tracker({ kind });
@@ -79,7 +98,7 @@ export default {
         backBtn,
         h('div', { class: 'tb-title' },
           h('span', {}, kind === 'daily' ? 'DAILY CHALLENGE' : 'FREE DOODLE'),
-          tpl ? h('small', {}, `お題: ${tpl.ja}`) : h('small', {}, '自由に描こう')),
+          tpl ? h('small', {}, `${tpl.debug ? 'DEBUG ' : ''}お題: ${tpl.ja}`) : h('small', {}, '自由に描こう')),
         gpsEl),
       stage,
       h('section', { class: 'hud frame' },
@@ -118,7 +137,19 @@ export default {
     map.onUserMove = () => { loc.userMoved(); followBtn.classList.add('on-attn'); };
     map.onCompass = () => loc.compassReset();
     sc.add(() => loc.dispose());
-    const tools = h('div', { class: 'stage-tools' }, viewSeg, h('div', { class: 'grow' }), followBtn);
+    // SMILE CAM（計測はそのまま。撮影画面は計測画面の上に重ねて開く）
+    const camBtn = h('button', { type: 'button', class: 'tool-btn', 'aria-label': 'SMILE CAM（顔に見えるモノを撮る）', html: icon('camera') });
+    let closeCam = null;
+    camBtn.addEventListener('click', () => {
+      sfx.blip();
+      if (closeCam) return;
+      const c = openCamOverlay();
+      closeCam = () => { c(); closeCam = null; };
+      const obs = new MutationObserver(() => { if (!document.querySelector('.cam-overlay')) { closeCam = null; obs.disconnect(); } });
+      obs.observe(document.body, { childList: true });
+    });
+    sc.add(() => { if (closeCam) closeCam(); });
+    const tools = h('div', { class: 'stage-tools' }, viewSeg, h('div', { class: 'grow' }), camBtn, followBtn);
     stage.append(tools);
 
     // ---- GUIDE（お題を地図に重ねる） ----
@@ -225,16 +256,19 @@ export default {
 
       const odaiCv = makePixelCanvas(36, 36, 'odai-cv');
       renderLayers(odaiCv, [{ strokes: tpl.strokes, color: PAL.pink, thick: 1 }], { pad: 3 });
-      const odai = h('button', { type: 'button', class: 'odai-card frame', 'aria-label': 'お題を拡大' }, odaiCv, h('span', {}, 'ODAI'));
+      const smileDay = tpl.theme === 'smile';
+      const odai = h('button', { type: 'button', class: `odai-card frame ${smileDay ? 'is-smile' : ''}`.trim(), 'aria-label': smileDay ? 'お題を拡大（SMILE DAY）' : 'お題を拡大' },
+        smileDay ? smileTag('SMILE DAY') : null, odaiCv, h('span', {}, 'ODAI'));
       odai.addEventListener('click', () => {
         sfx.blip();
         const big = makePixelCanvas(64, 64, 'odai-big');
         renderLayers(big, [{ strokes: tpl.strokes, color: PAL.pink, thick: 2 }], { pad: 5 });
         modal({
           title: `ODAI: ${tpl.name}`,
-          body: h('div', { class: 'center' }, big,
+          body: h('div', { class: 'center' }, smileDay ? h('p', {}, smileTag('SMILE DAY')) : null, big,
             h('p', {}, `「${tpl.ja}」の形になるように歩こう。`),
-            h('p', { class: 'muted' }, 'GUIDE でお題を地図に重ね、地図を動かして位置・大きさ・向きを決めて SET。場所・大きさ・向きは自由で、FINISH のあと採点の前に軌跡を回してお題に重ねられます。一筆書きできない線は PAUSE で移動しよう。')),
+            h('p', { class: 'muted' }, 'GUIDE でお題を地図に重ね、地図を動かして位置・大きさ・向きを決めて SET。場所・大きさ・向きは自由で、FINISH のあと採点の前に軌跡を回してお題に重ねられます。一筆書きできない線は PAUSE で移動しよう。'),
+            smileDay ? h('p', { class: 'muted' }, '笑顔のお題は目や口が小さいので、顔の幅 300m くらい（GUIDE を大きめ）に描くと、GPS のブレがあってもきれいに描けます。') : null),
         });
       });
       stage.append(odai);

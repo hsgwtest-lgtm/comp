@@ -49,6 +49,40 @@ export function rankDaily(posts) {
   return [...best.values()].sort(cmp);
 }
 
+// ---- 笑顔の回数の記録（smile_log）----
+// 投稿が成功したら記録をキューに入れて送る。送れなかった分（通信エラー・古いルール）は端末に残し、
+// 次に起動したときや次の投稿のときに再送する（ID = 投稿 ID なので二重には数えない）。
+// ルールで拒否され続ける記録（送る前に投稿を消した など）は 14 日でキューから外す。
+const LOG_QUEUE_KEY = 'nazca.smileLogQueue';
+const LOG_GIVE_UP_MS = 14 * 86400000;
+const loadQueue = () => { try { return JSON.parse(localStorage.getItem(LOG_QUEUE_KEY) || '[]'); } catch { return []; } };
+const saveQueue = (q) => { try { localStorage.setItem(LOG_QUEUE_KEY, JSON.stringify(q)); } catch { /* noop */ } };
+let flushing = null;
+
+/** entry: { type: 'geoglyph' | 'found', refId: 投稿 ID, dayKey?: チャレンジ日（geoglyph のとき） } */
+export function recordSmile(entry) {
+  const q = loadQueue().filter((e) => e.refId !== entry.refId);
+  q.push({ ...entry, at: Date.now() });
+  saveQueue(q);
+  // 送信中の再送があれば、それが終わってからもう一度（今回の記録も確実に送る）
+  return (flushing || Promise.resolve()).then(() => flushSmileLog());
+}
+
+export function flushSmileLog() {
+  if (flushing) return flushing;
+  flushing = (async () => {
+    const s = store();
+    if (!s || !s.logSmile) return;
+    for (const e of loadQueue()) {
+      let r = 'retry';
+      try { r = await s.logSmile({ type: e.type, refId: e.refId, dayKey: e.dayKey || null }); } catch { r = 'retry'; }
+      const drop = r === 'ok' || (r === 'denied' && Date.now() - (e.at || 0) > LOG_GIVE_UP_MS);
+      if (drop) saveQueue(loadQueue().filter((x) => x.refId !== e.refId));
+    }
+  })().finally(() => { flushing = null; });
+  return flushing;
+}
+
 export const STAMPS = [
   { id: 'like', label: 'LIKE', icon: 'heart' },
   { id: 'star', label: 'STAR', icon: 'star' },

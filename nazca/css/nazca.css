@@ -726,3 +726,63 @@ p { margin: 0 0 8px; }
 @media (prefers-reduced-motion: reduce) {
   .dc-head { animation: none; }
 }
+
+/* ---------- SMILE CAM ---------- */
+.cam-overlay { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: var(--night); }
+.scr-cam { gap: 4px; }
+.cam-view {
+  position: relative; width: min(100%, 420px); aspect-ratio: 1; margin: 6px auto 4px;
+  overflow: hidden; background: #000; box-shadow: 0 0 0 4px var(--line), 0 0 0 8px var(--mute);
+  touch-action: none;
+}
+.cam-view video, .cam-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+.cam-view canvas.px, .cam-result, .photo-cv { image-rendering: pixelated; image-rendering: crisp-edges; }
+.cam-corners i { position: absolute; width: 22px; height: 22px; border: 0 solid var(--ink); pointer-events: none; }
+.cam-corners i:nth-child(1) { left: 8px; top: 8px; border-left-width: 4px; border-top-width: 4px; }
+.cam-corners i:nth-child(2) { right: 8px; top: 8px; border-right-width: 4px; border-top-width: 4px; }
+.cam-corners i:nth-child(3) { left: 8px; bottom: 8px; border-left-width: 4px; border-bottom-width: 4px; }
+.cam-corners i:nth-child(4) { right: 8px; bottom: 8px; border-right-width: 4px; border-bottom-width: 4px; }
+.cam-panel { width: min(100%, 420px); margin: 0 auto; display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; }
+.cam-zoom { display: flex; align-items: center; gap: 6px; }
+.cam-zoom .btn { margin: 4px; min-width: 44px; }
+.cam-range { flex: 1; accent-color: var(--pink); }
+.cam-zl { font: 8px/1 var(--display); font-weight: normal; color: var(--sand); min-width: 36px; text-align: right; }
+.cam-note { margin: 2px 0; font-size: 12px; line-height: 1.5; color: var(--sand); text-align: center; }
+.cam-status { margin: 2px 0; font-size: 12px; color: var(--dim); text-align: center; }
+.cam-status.warn { color: var(--pink); }
+.cam-shot { margin-top: 6px; }
+.cam-pick { align-self: center; font-size: 13px; }
+.cam-opt .pub-text { padding: 10px 8px; }
+.photo-cv { width: 100%; height: auto; aspect-ratio: 1; display: block; background: #000; }
+
+/* ---------- SMILE DAY（笑顔のお題の日） ---------- */
+.smile-tag { display: inline-flex; align-items: center; gap: 4px; font: 8px/1 var(--display); color: var(--gold); white-space: nowrap; }
+.smile-tag .ico { width: 9px; height: 9px; flex: none; }
+.today-smile { display: flex; width: max-content; margin-bottom: 8px; }
+.today-next { margin-top: 2px; }
+.today-name .jp.long { font-size: 24px; }
+.odai-card .smile-tag { gap: 3px; margin-bottom: 2px; }
+.day-mid .day-smile { margin: 0 0 4px; }
+.d-odai .d-smile { margin-left: 8px; }
+@media (max-width: 360px) {
+  .today-name .jp.long { font-size: 18px; }
+}
+
+/* ---------- GALLERY: SMILES・写真の詳細 ---------- */
+.tabs.tabs3 { grid-template-columns: repeat(3, 1fr); }
+.tabs3 .tab { gap: 6px; padding: 0 4px; }
+.photo-thumb .photo-cv { width: 100%; }
+.detail-art.photo-art { min-height: 0; padding: 8px 0; }
+.detail-photo { width: min(100%, 288px); }
+.d-comment { margin: 8px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
+.photo-detail .d-title { overflow-wrap: anywhere; }
+.detail-art.photo-map { height: 200px; margin-top: 12px; }
+
+/* ---------- EXPLORE: 見つけた笑顔のピン ---------- */
+.pmap-smile { display: grid; place-items: center; padding: 0; color: var(--dim); }
+.pmap-smile .ico { width: 18px; height: 18px; }
+.pmap-smile.on { background: var(--gold); color: #2a1606; }
+/* とても狭い画面（320px）では SIGNAL の文字を省いて、下のボタンを画面に収める */
+@media (max-width: 340px) {
+  .signal .sig-l:not(.all) { display: none; }
+}

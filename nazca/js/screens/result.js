@@ -9,7 +9,7 @@ import { formatDuration, dayKeyShort, challengeDayKey } from '../time.js';
 import { prepareMatch, scoreLabel, distanceToScore, wrapDeg, fmtPts, SIZE_MAX } from '../score.js';
 import { segmentsToXY, toRelativeShape, toGeoShape, unpackFlat, boundsCenter, fmtDeg } from '../geo.js';
 import { templateById } from '../challenges.js';
-import { getName, setName, store } from '../store/index.js';
+import { getName, setName, store, recordSmile } from '../store/index.js';
 import { sfx } from '../sfx.js';
 import { DAILY_MIN_DISTANCE, TITLE_MAX } from '../config.js';
 import { isDebug } from './track.js';
@@ -26,6 +26,8 @@ export default {
     const tpl = kind === 'daily' ? (f.challenge || templateById(f.challengeId)) : null;
     const xy = segmentsToXY(f.segments);
     const debug = isDebug();
+    // デバッグモードの &odai= で描いた作品は投稿しない（ランキング・笑顔の回数の対象外）
+    const debugOdai = !!(tpl && tpl.debug);
     let publish = 'sketch';
     let result = null;
     let busy = false;
@@ -96,7 +98,9 @@ export default {
       if (f.distance < DAILY_MIN_DISTANCE) {
         notes.append(h('p', { class: 'warn' }, `ランキング参加には ${DAILY_MIN_DISTANCE}m 以上の歩行が必要です。`));
       }
-      if (f.dayKey !== challengeDayKey()) {
+      if (debugOdai) {
+        notes.append(h('p', { class: 'warn' }, 'デバッグ用のお題（&odai=）で描いた作品なので、投稿はできません（採点の確認用）。'));
+      } else if (f.dayKey !== challengeDayKey()) {
         notes.append(h('p', { class: 'muted' }, `このスコアは ${dayKeyShort(f.dayKey)} のお題のランキングに登録されます。`));
       }
     }
@@ -151,7 +155,8 @@ export default {
     updateFrame();
 
     // ---- ボタン ----
-    const postBtn = btn(`${icon('flag')} POST`, () => doPost(), 'btn-pink btn-xl btn-block');
+    const postBtn = btn(debugOdai ? 'NO POST (DEBUG)' : `${icon('flag')} POST`, () => doPost(), 'btn-pink btn-xl btn-block');
+    if (debugOdai) postBtn.disabled = true;
     const actions = h('div', { class: 'res-actions' },
       postBtn,
       h('div', { class: 'row2' },
@@ -320,7 +325,7 @@ export default {
     const reveal = () => {
       let prevBest = 0;
       try { prevBest = Number(localStorage.getItem(BEST_KEY(f.dayKey)) || 0); } catch { /* noop */ }
-      const isBest = result.pts > prevBest;
+      const isBest = !debugOdai && result.pts > prevBest;   // デバッグ用のお題は自己ベストに記録しない
       if (isBest) { try { localStorage.setItem(BEST_KEY(f.dayKey), String(result.pts)); } catch { /* noop */ } }
       scoreRank.textContent = '';
       scoreSub.textContent = '';
@@ -340,9 +345,12 @@ export default {
         const r = scoreLabel(result.score);
         scoreRank.textContent = r;
         scoreRank.className = `score-rank rank-${r}`;
-        scoreSub.innerHTML = isBest
-          ? `<span class="blink new-rec">NEW RECORD!</span>`
-          : `TODAY BEST ${fmtPts(prevBest)} PTS`;
+        if (debugOdai) scoreSub.textContent = 'DEBUG ODAI（記録しません）';
+        else {
+          scoreSub.innerHTML = isBest
+            ? `<span class="blink new-rec">NEW RECORD!</span>`
+            : `TODAY BEST ${fmtPts(prevBest)} PTS`;
+        }
         sfx.fanfare(result.score >= 60);
       };
       requestAnimationFrame(step);
@@ -451,6 +459,7 @@ export default {
     const doPost = async () => {
       if (busy) return;
       if (kind === 'daily' && !result) return;
+      if (debugOdai) { sfx.error(); toast('デバッグ用のお題の作品は投稿できません'); return; }
       if (kind === 'daily' && f.distance < DAILY_MIN_DISTANCE && !debug) {
         sfx.error();
         modal({ title: 'TOO SHORT', body: `<p>ランキングに参加するには ${DAILY_MIN_DISTANCE}m 以上歩いてください。</p>` });
@@ -480,8 +489,12 @@ export default {
         const c = frame.center || autoCenter;
         post.view = { lat: Math.round(c.lat * 1e5) / 1e5, lng: Math.round(c.lng * 1e5) / 1e5, rot: frame.rot };
       }
-      if (kind === 'daily') Object.assign(post, { dayKey: f.dayKey, challengeId: tpl.id, challengeName: tpl.ja, score: result.score, pts: result.pts, sizeM: result.sizeM });
-      else post.title = titleInput.value.trim().slice(0, TITLE_MAX) || 'UNTITLED';
+      if (kind === 'daily') {
+        Object.assign(post, { dayKey: f.dayKey, challengeId: tpl.id, challengeName: tpl.ja, score: result.score, pts: result.pts, sizeM: result.sizeM });
+        if (tpl.theme === 'smile') post.theme = 'smile';   // 笑顔のお題
+      } else {
+        post.title = titleInput.value.trim().slice(0, TITLE_MAX) || 'UNTITLED';
+      }
 
       busy = true;
       postBtn.disabled = true;
@@ -489,6 +502,8 @@ export default {
       try {
         if (!f.postId) { f.postId = s.newPostId(); finishedTrack.save(f); }
         const id = await s.addPost(kind, post, f.postId);
+        // 笑顔地上絵の作品数（smile_log。ID = 投稿 ID なので再送しても 1 件）
+        if (post.theme === 'smile') recordSmile({ type: 'geoglyph', refId: id, dayKey: f.dayKey }).catch(() => {});
         // 投稿が済んだら端末内の生データ（緯度経度）も消す
         finishedTrack.clear();
         try { sessionStorage.setItem('nazca.highlight', id); } catch { /* noop */ }

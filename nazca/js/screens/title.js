@@ -1,9 +1,11 @@
 // 1. MODE SELECT（タイトル・メイン画面）
-import { h, btn, askName, showHelp, scope, modal, confirmDialog, esc } from '../ui.js';
+import { h, btn, askName, showHelp, scope, modal, confirmDialog, esc, smileTag } from '../ui.js';
 import { icon, makePixelCanvas, traceAnimation, PAL } from '../pixel.js';
 import { navigate } from '../router.js';
-import { challengeDayKey, nextSwitch, formatCountdown, dayKeyRangeLabel } from '../time.js';
+import { challengeDayKey, nextSwitch, formatCountdown, dayKeyRangeLabel, shiftDayKey } from '../time.js';
 import { quickChallenge, getChallenge } from '../daily.js';
+import { isSmile } from '../challenges.js';
+import { debugOdai } from './track.js';
 import { getName, setName, store } from '../store/index.js';
 import { activeTrack, finishedTrack } from '../tracker.js';
 import { sfx } from '../sfx.js';
@@ -37,7 +39,9 @@ export default {
     const sc = scope();
     el.className = 'scr scr-title';
     let dayKey = challengeDayKey();
-    let tpl = quickChallenge(dayKey);
+    // デバッグモードの &odai= 指定があれば、そのお題を表示（計測画面と同じ）
+    const dbg = debugOdai();
+    let tpl = dbg || quickChallenge(dayKey);
 
     const cv = makePixelCanvas(64, 64, 'today-cv');
     cv.setAttribute('role', 'img');
@@ -45,29 +49,41 @@ export default {
     const nameEl = h('div', { class: 'today-name' });
     const rangeEl = h('div', { class: 'today-range' });
     const cdEl = h('b', { class: 'cd' });
+    const smileEl = smileTag('SMILE DAY', 'today-smile hidden');
+    const nextSmileEl = smileTag('NEXT: SMILE DAY', 'today-next hidden');
 
     const paint = () => {
       stopAnim();
       stopAnim = traceAnimation(cv, tpl.strokes, { color: '#f3dcab', thick: 2, pad: 6, ground: true });
-      nameEl.replaceChildren(h('span', { class: 'jp' }, tpl.ja), h('small', {}, tpl.name));
-      cv.setAttribute('aria-label', `今日のお題: ${tpl.ja}`);
+      nameEl.replaceChildren(h('span', { class: `jp ${tpl.ja.length >= 6 ? 'long' : ''}`.trim() }, tpl.ja), h('small', {}, tpl.name));
+      cv.setAttribute('aria-label', `今日のお題: ${tpl.ja}${isSmile(tpl) ? '（SMILE DAY）' : ''}`);
       rangeEl.textContent = dayKeyRangeLabel(dayKey);
+      smileEl.classList.toggle('hidden', !isSmile(tpl));
     };
     paint();
+    // 次のチャレンジ日が笑顔のお題なら「NEXT: SMILE DAY」（上書きのお題も確認する）
+    const checkNext = (k) => {
+      const nk = shiftDayKey(k, 1);
+      const show = (t) => { if (dayKey === k) nextSmileEl.classList.toggle('hidden', !isSmile(t)); };
+      show(quickChallenge(nk));
+      getChallenge(nk).then(show).catch(() => {});
+    };
+    checkNext(dayKey);
 
     const tick = () => {
       const now = new Date();
       const k = challengeDayKey(now);
       if (k !== dayKey) {
-        dayKey = k; tpl = quickChallenge(k); paint(); sfx.coin();
-        getChallenge(k).then((t) => { if (t.id !== tpl.id && dayKey === k) { tpl = t; paint(); } });
+        dayKey = k; tpl = dbg || quickChallenge(k); paint(); sfx.coin();
+        if (!dbg) getChallenge(k).then((t) => { if (t.id !== tpl.id && dayKey === k) { tpl = t; paint(); } });
+        checkNext(k);
       }
       cdEl.textContent = formatCountdown(nextSwitch(now) - now);
       const b = modeBadge();
       badge.textContent = b.text; badge.className = `badge ${b.cls}`;
     };
 
-    getChallenge(dayKey).then((t) => { if (t.id !== tpl.id) { tpl = t; paint(); } });
+    if (!dbg) getChallenge(dayKey).then((t) => { if (t.id !== tpl.id) { tpl = t; paint(); } });
 
     const startMode = async (kind) => {
       const a = activeTrack.load();
@@ -141,6 +157,7 @@ export default {
     menu.append(
       btn(`${icon('star')} DAILY CHALLENGE`, () => startMode('daily'), 'btn-block'),
       btn(`${icon('pencil')} FREE DOODLE`, () => startMode('free'), 'btn-block btn-blue'),
+      btn(`${icon('camera')} SMILE CAM`, () => { sfx.select(); navigate('cam'); }, 'btn-block btn-pink'),
       btn(`${icon('compass')} EXPLORE`, () => { sfx.select(); navigate('explore'); }, 'btn-block btn-earth'),
       btn(`${icon('trophy')} GALLERY &amp; RANKING`, () => { sfx.select(); navigate('gallery/daily'); }, 'btn-block btn-ghost'),
     );
@@ -152,13 +169,14 @@ export default {
         h('h1', { class: 'logo', 'aria-label': 'nazca' }, 'NAZCA'),
         h('p', { class: 'logo-sub' }, '8-BIT GPS ART')),
       h('section', { class: 'today frame' },
-        h('div', { class: 'today-head' }, "TODAY'S ODAI"),
+        h('div', { class: 'today-head' }, dbg ? "TODAY'S ODAI (DEBUG)" : "TODAY'S ODAI"),
         h('div', { class: 'today-body' },
           cv,
           h('div', { class: 'today-info' },
+            smileEl,
             nameEl,
             rangeEl,
-            h('div', { class: 'today-cd' }, h('span', {}, `NEXT ${CHALLENGE_SWITCH_HOUR}:00`), cdEl)))),
+            h('div', { class: 'today-cd' }, h('span', {}, `NEXT ${CHALLENGE_SWITCH_HOUR}:00`), cdEl, nextSmileEl)))),
       menu,
       h('footer', { class: 'title-foot' },
         h('span', {}, 'PLAYER '), nameBtn,

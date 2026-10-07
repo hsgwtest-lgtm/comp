@@ -162,6 +162,11 @@ export function showHelp() {
   });
 }
 
+/** 笑顔のお題の日の目印（ドット絵フォント・金色）。'SMILE DAY' / 'NEXT: SMILE DAY' */
+export function smileTag(text = 'SMILE DAY', cls = '') {
+  return h('span', { class: `smile-tag ${cls}`.trim(), html: `${icon('face')}<span>${esc(text)}</span>` });
+}
+
 /** 画面ごとの後片付けを登録する簡易スコープ */
 export function scope() {
   const fns = [];

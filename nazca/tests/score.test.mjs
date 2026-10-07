@@ -1,7 +1,9 @@
 // 採点ロジックの検証: node tests/score.test.mjs
 // お題そのものを GPS ノイズ付きで（どの向きでも）歩いた場合・街路（碁盤目）に沿って近似した場合・
 // 半分だけ歩いた場合・別のお題を歩いた場合・でたらめに歩いた場合のスコアを比較する。
-import { TEMPLATES } from '../js/challenges.js';
+// 後半は笑顔のお題（theme: 'smile'）: 正しく歩いた場合・別の笑顔・口だけ・計測と同じ GPS フィルタでの描きやすさ。
+import { TEMPLATES, SMILE_TEMPLATES } from '../js/challenges.js';
+import { GPS } from '../js/config.js';
 import { scoreTrack, prepareMatch, sizeMultiplier, totalPoints } from '../js/score.js';
 
 function rng(seed) {
@@ -166,5 +168,81 @@ for (const id of ['note', 'bolt']) {
   if (!ok) fails++;
 }
 console.log('empty:', scoreTrack(TEMPLATES[0].strokes, []).score, ' single point:', scoreTrack(TEMPLATES[0].strokes, [[[0, 0]]]).score);
+
+// ================= 笑顔のお題 =================
+// 実際の歩行に近いモデル: 1.3 m/s・1 秒ごとの測位。ゆっくり漂う誤差 + 細かいブレ + ときどきの飛び（精度の悪い測位）。
+// 計測（tracker.js）と同じフィルタ: 精度 GPS.maxAccuracy 超は捨てる・GPS.minStep 未満の移動は記録しない・瞬間移動は捨てる。
+// ストロークの間は PAUSE（線にしない）。env: open = 空が開けた場所 / town = 住宅街 / urban = ビル街
+const GPS_ENV = { open: { drift: 2.5, jitter: 1, spike: 0.01 }, town: { drift: 5, jitter: 2, spike: 0.02 }, urban: { drift: 9, jitter: 3.5, spike: 0.05 } };
+function realWalk(t, sizeM, env, rot = (rand() - 0.5) * 360) {
+  const E = GPS_ENV[env];
+  const placed = densify(placeTemplate(t, sizeM, rot, 0, 0), 1.3);
+  const a = 0.97; const sd = E.drift * Math.sqrt(1 - a * a);
+  let dx = gauss() * E.drift; let dy = gauss() * E.drift; let spikeLeft = 0; let sx = 0; let sy = 0; let sec = 0;
+  const segs = [];
+  for (const st of placed) {
+    const seg = []; segs.push(seg);
+    for (const [x, y] of st) {
+      sec += 1;
+      dx = dx * a + gauss() * sd; dy = dy * a + gauss() * sd;
+      if (spikeLeft <= 0 && rand() < E.spike) { spikeLeft = 2 + Math.floor(rand() * 5); const r = 15 + rand() * 30; const th = rand() * 2 * Math.PI; sx = Math.cos(th) * r; sy = Math.sin(th) * r; }
+      let ox = 0; let oy = 0; let acc = E.drift * 1.6 + Math.abs(gauss()) * 2;
+      if (spikeLeft > 0) { spikeLeft--; ox = sx; oy = sy; acc = 18 + Math.hypot(sx, sy) * 0.6 + rand() * 10; }
+      const fx = x + dx + ox + gauss() * E.jitter; const fy = y + dy + oy + gauss() * E.jitter;
+      if (acc > GPS.maxAccuracy) continue;
+      const prev = seg[seg.length - 1];
+      if (prev) {
+        const d = Math.hypot(fx - prev[0], fy - prev[1]);
+        if (d < GPS.minStep) continue;
+        if (d > 25 && d / Math.max(0.5, sec - prev[2]) > GPS.maxSpeed) continue;
+      }
+      seg.push([fx, fy, sec]);
+    }
+  }
+  return segs.map((sg) => sg.map(([x, y]) => [x, y])).filter((sg) => sg.length >= 2);
+}
+const strokeLen = (st) => st.slice(1).reduce((acc, q, i) => acc + Math.hypot(q[0] - st[i][0], q[1] - st[i][1]), 0);
+function smallestFeature(t) {
+  const ext = (pts) => { const xs = pts.map((q) => q[0]); const ys = pts.map((q) => q[1]); return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)); };
+  return Math.min(...t.strokes.map(ext)) / ext(t.strokes.flat());
+}
+
+console.log('\n--- SMILE ODAI（顔の幅 = 外接矩形の長辺。GPS は計測と同じフィルタ込み・town = 住宅街の誤差）---');
+console.log(`${'ID'.padEnd(9)} ${'NAME'.padEnd(13)} ${pad('NOISY', 6)} ${pad('EXACT', 6)} ${pad('GRID', 6)} ${pad('OTHER', 6)} ${pad('MAX OTHER', 15)} ${pad('MOUTH', 6)} ${pad('T@120', 6)} ${pad('T@200', 6)} ${pad('U@300', 6)} ${pad('MIN@200', 8)}`);
+const smileWalks = SMILE_TEMPLATES.map((t) => walk(t));
+const sm = { other: [], t120: [], t200: [] };
+for (const [i, t] of SMILE_TEMPLATES.entries()) {
+  const noisy = scoreTrack(t.strokes, smileWalks[i]).score;
+  const exact = scoreTrack(t.strokes, placeTemplate(t, 300, 77, 5, 5)).score;
+  const grid = scoreTrack(t.strokes, gpsNoise(densify(manhattan(placeTemplate(t, 400, 0, 0, 0), 40)))).score;
+  const others = SMILE_TEMPLATES.map((o, j) => (j === i ? null : { id: o.id, sc: scoreTrack(t.strokes, smileWalks[j]).score })).filter(Boolean);
+  const avgO = others.reduce((acc, o) => acc + o.sc, 0) / others.length;
+  const maxO = others.reduce((m, o) => (o.sc > m.sc ? o : m));
+  // 口（いちばん長い線）だけを歩いた場合
+  const mouth = t.strokes.slice().sort((x, y) => strokeLen(y) - strokeLen(x))[0];
+  const mouthOnly = scoreTrack(t.strokes, gpsNoise(densify([placeTemplate({ strokes: [mouth] }, 250, 0, 0, 0)[0]]))).score;
+  const t120 = scoreTrack(t.strokes, realWalk(t, 120, 'town')).score;
+  const t200 = scoreTrack(t.strokes, realWalk(t, 200, 'town')).score;
+  const u300 = scoreTrack(t.strokes, realWalk(t, 300, 'urban')).score;
+  sm.other.push(avgO); sm.t120.push(t120); sm.t200.push(t200);
+  const minF = `${Math.round(smallestFeature(t) * 200)}m`;
+  console.log(`${t.id.padEnd(9)} ${t.name.padEnd(13)} ${pad(noisy.toFixed(1), 6)} ${pad(exact.toFixed(1), 6)} ${pad(grid.toFixed(1), 6)} ${pad(avgO.toFixed(1), 6)} ${pad(`${maxO.sc.toFixed(1)} ${maxO.id.slice(6)}`, 15)} ${pad(mouthOnly.toFixed(1), 6)} ${pad(t120.toFixed(1), 6)} ${pad(t200.toFixed(1), 6)} ${pad(u300.toFixed(1), 6)} ${pad(minF, 8)}`);
+  if (noisy < 95) { fails++; console.log(`  ! ${t.id}: お題どおりの歩行が 95% 未満`); }
+  if (exact < 99.5) { fails++; console.log(`  ! ${t.id}: 完全一致が 99.5% 未満`); }
+  if (avgO > noisy - 40) { fails++; console.log(`  ! ${t.id}: 別の笑顔の平均が正解に近すぎる`); }
+  if (mouthOnly > 60) { fails++; console.log(`  ! ${t.id}: 口だけでも高得点になる`); }
+  if (t200 < 80) { fails++; console.log(`  ! ${t.id}: 顔の幅 200m・住宅街の GPS で 80% 未満`); }
+}
+console.log(`SMILE AVG: OTHER ${avg(sm.other)}  T@120 ${avg(sm.t120)}  T@200 ${avg(sm.t200)}`);
+console.log('（OTHER = 別の笑顔 29 種を歩いた軌跡の平均。MAX OTHER は最も近かった笑顔。MOUTH = 口だけ歩いた場合。');
+console.log('  T@120 / T@200 = 住宅街の GPS 誤差で顔の幅 120m / 200m、U@300 = ビル街で 300m。MIN@200 = 顔の幅 200m のときの最小のパーツの大きさ）');
+// 笑顔のデータの形式（id・名前・難易度・pool・theme）
+for (const t of SMILE_TEMPLATES) {
+  const ok = /^smile-\d{2}$/.test(t.id) && t.name.length <= 16 && t.name === t.name.toUpperCase() && /^[\u30A0-\u30FF]+$/.test(t.ja)
+    && [1, 2, 3].includes(t.level) && ['rotation', 'normal', 'advanced'].includes(t.pool) && t.theme === 'smile';
+  if (!ok) { fails++; console.log(`  ! ${t.id}: データの形式が違う`); }
+}
+if (TEMPLATES.find((t) => t.id === 'smile').theme) { fails++; console.log('  ! 既存の smile に theme が付いている'); }
+
 if (fails) { console.log(`FAIL: ${fails}`); process.exit(1); }
 console.log('OK');

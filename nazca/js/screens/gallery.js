@@ -1,5 +1,5 @@
 // 4. GALLERY & RANKING（ギャラリー・ランキング画面）
-import { h, btn, scope, toast } from '../ui.js';
+import { h, btn, scope, toast, smileTag } from '../ui.js';
 import { icon, makePixelCanvas, renderLayers, PAL } from '../pixel.js';
 import { navigate } from '../router.js';
 import { challengeDayKey, shiftDayKey, dayKeyShort, dayKeyRangeLabel, formatStamp } from '../time.js';
@@ -8,6 +8,7 @@ import { unpackFlat } from '../geo.js';
 import { store, rankDaily, reactionCount } from '../store/index.js';
 import { scoreLabel, postPoints, fmtPts, sizeMultiplier } from '../score.js';
 import { openDetail } from './detail.js';
+import { photoCanvas } from '../smilepix.js';
 import { sfx } from '../sfx.js';
 
 const ORD = (n) => {
@@ -24,7 +25,7 @@ function thumb(post, size) {
 
 export default {
   async mount(el, params) {
-    const tab = params[0] === 'free' ? 'free' : 'daily';
+    const tab = ['daily', 'free', 'smile'].includes(params[0]) ? params[0] : 'daily';
     const today = challengeDayKey();
     let dayKey = /^\d{4}-\d{2}-\d{2}$/.test(params[1] || '') ? params[1] : today;
     if (dayKey > today) dayKey = today;
@@ -39,18 +40,20 @@ export default {
     const refreshBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '更新', html: icon('refresh') });
     refreshBtn.addEventListener('click', () => { sfx.blip(); load(); });
 
-    const tabs = h('div', { class: 'tabs' },
+    const tabs = h('div', { class: 'tabs tabs3' },
       h('button', { type: 'button', class: `tab ${tab === 'daily' ? 'on' : ''}`, html: `${icon('trophy')} RANKING`, onclick: () => { sfx.blip(); navigate('gallery/daily'); } }),
-      h('button', { type: 'button', class: `tab ${tab === 'free' ? 'on' : ''}`, html: `${icon('pencil')} FREE ART`, onclick: () => { sfx.blip(); navigate('gallery/free'); } }));
+      h('button', { type: 'button', class: `tab ${tab === 'free' ? 'on' : ''}`, html: `${icon('pencil')} FREE ART`, onclick: () => { sfx.blip(); navigate('gallery/free'); } }),
+      h('button', { type: 'button', class: `tab ${tab === 'smile' ? 'on' : ''}`, html: `${icon('face')} SMILES`, onclick: () => { sfx.blip(); navigate('gallery/smile'); } }));
     const content = h('div', { class: 'gal-content' });
-    el.append(
+    // （append / replaceChildren に null を渡すと「null」という文字が出るので除く）
+    el.append(...[
       h('header', { class: 'topbar' }, backBtn,
-        h('div', { class: 'tb-title' }, h('span', {}, 'GALLERY'), h('small', {}, tab === 'daily' ? 'ハイスコアランキング' : 'みんなの自由作')),
+        h('div', { class: 'tb-title' }, h('span', {}, 'GALLERY'), h('small', {}, { daily: 'ハイスコアランキング', free: 'みんなの自由作', smile: 'みんなが見つけた笑顔' }[tab])),
         refreshBtn),
       tabs,
       s.mode === 'local' ? h('div', { class: 'local-banner' }, 'LOCAL MODE：投稿はこの端末だけに保存されます（CPU は練習用ダミー）') : null,
       content,
-    );
+    ].filter(Boolean));
 
     const loading = () => content.replaceChildren(h('div', { class: 'loading blink' }, 'LOADING...'));
     const failed = (e) => {
@@ -98,14 +101,16 @@ export default {
         row.addEventListener('click', () => { sfx.blip(); openDetail(p).then((r) => load(!(r && r.deleted))); });
         board.append(row);
       });
-      content.replaceChildren(
+      content.replaceChildren(...[
         h('div', { class: 'day-nav' }, prev,
           h('div', { class: 'day-mid' }, odaiCv,
-            h('div', {}, h('b', {}, `${dayKeyShort(dayKey)}  ${tpl.name}`), h('small', {}, `お題: ${tpl.ja} ／ ${dayKeyRangeLabel(dayKey)}`))),
+            h('div', {}, h('b', {}, `${dayKeyShort(dayKey)}  ${tpl.name}`), tpl.theme === 'smile' ? smileTag('SMILE DAY', 'day-smile') : null,
+              h('small', {}, `お題: ${tpl.ja} ／ ${dayKeyRangeLabel(dayKey)}`))),
           next),
         board,
         h('p', { class: 'muted small center' }, `${ranked.length} PLAYERS ／ 各プレイヤーのベストスコアを表示`),
-        hiddenN ? h('p', { class: 'muted small center' }, `別のお題で採点されたスコア ${hiddenN} 件は表示していません（古いバージョンのアプリで遊んだ可能性があります）`) : null);
+        hiddenN ? h('p', { class: 'muted small center' }, `別のお題で採点されたスコア ${hiddenN} 件は表示していません（古いバージョンのアプリで遊んだ可能性があります）`) : null,
+      ].filter(Boolean));
       const hl = content.querySelector('.hl');
       if (hl) hl.scrollIntoView({ block: 'center' });
     };
@@ -133,12 +138,38 @@ export default {
       if (hl) hl.scrollIntoView({ block: 'center' });
     };
 
+    // ---- SMILES（SMILE CAM で撮った「顔に見えるモノ」）----
+    const renderSmiles = async (quiet) => {
+      if (!quiet) loading();
+      const posts = (await s.listSmiles()).sort((a, b) => b.createdAt - a.createdAt);
+      if (!posts.length) {
+        content.replaceChildren(h('div', { class: 'empty' }, h('p', {}, 'NO SMILES YET'),
+          h('p', { class: 'muted' }, '散歩中に見つけた「顔に見えるモノ」を撮ってみよう！'),
+          btn(`${icon('camera')} SMILE CAM`, () => navigate('cam'), 'btn-sm btn-pink')));
+        return;
+      }
+      const grid = h('div', { class: 'art-grid' });
+      for (const p of posts) {
+        const card = h('button', { type: 'button', class: `art-card smile-card ${p.id === highlight ? 'hl' : ''}` },
+          h('div', { class: 'art-thumb photo-thumb' }, photoCanvas(p),
+            h('span', { class: `mode-tag ${p.publish}`, html: icon(p.publish === 'map' ? 'map' : 'face') })),
+          h('div', { class: 'art-title jp' }, p.title || 'NO TITLE'),
+          h('div', { class: 'art-by' }, h('span', { class: 'jp' }, p.name || '???')),
+          h('div', { class: 'art-foot' }, h('span', {}, formatStamp(p.createdAt)), h('span', { class: 'rx', html: `${icon('heart')}${reactionCount(p)}` })));
+        card.addEventListener('click', () => { sfx.blip(); openDetail(p).then((r) => load(!(r && r.deleted))); });
+        grid.append(card);
+      }
+      content.replaceChildren(grid);
+      const hl = content.querySelector('.hl');
+      if (hl) hl.scrollIntoView({ block: 'center' });
+    };
+
     let alive = true;
     const load = async (quiet = false) => {
       if (!alive) return;
       const y = window.scrollY;
       try {
-        if (tab === 'daily') await renderDaily(quiet); else await renderFree(quiet);
+        if (tab === 'daily') await renderDaily(quiet); else if (tab === 'smile') await renderSmiles(quiet); else await renderFree(quiet);
         if (quiet) window.scrollTo(0, y);
       } catch (e) {
         if (!quiet) failed(e); else toast('更新できませんでした');

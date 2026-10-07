@@ -4,11 +4,13 @@
 //   free_posts/{id}   フリーお絵描きの投稿（新しい順）
 //   challenges/{dayKey} お題の上書き（任意・管理者がコンソールから作成）
 //   users/{uid}       表示名
+//   smile_posts/{id}  撮影した笑顔（64×64 のドット絵。MAP 公開のときだけ pos）
+//   smile_log/{id}    笑顔の回数の記録（追記専用。ID = 投稿 ID）
 import { FIREBASE_SDK_VERSION } from '../config.js';
 import { templateFromDoc } from '../challenges.js';
 
 const SDK = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}`;
-const COL = { daily: 'daily_posts', free: 'free_posts' };
+const COL = { daily: 'daily_posts', free: 'free_posts', smile: 'smile_posts' };
 // あとからルールに追加した項目（古いルールでは拒否されるので、そのときは外して再送する）
 const OPTIONAL_KEYS = ['view', 'pts', 'sizeM', 'theme'];
 
@@ -128,6 +130,44 @@ export function createFirebaseStore(config) {
         ...d.docs.map((x) => toPost(x.id, 'daily', x.data())),
         ...f.docs.map((x) => toPost(x.id, 'free', x.data())),
       ];
+    },
+
+    /** 撮影した笑顔（新しい順） */
+    async listSmiles(n = 60) {
+      await api.connect();
+      const q = fs.query(fs.collection(db, COL.smile), fs.orderBy('createdAt', 'desc'), fs.limit(n));
+      const snap = await withTimeout(fs.getDocs(q), 15000, 'listSmiles');
+      return snap.docs.map((d) => toPost(d.id, 'smile', d.data()));
+    },
+
+    /** EXPLORE 用: MAP 公開の笑顔（等価検索だけなので複合インデックス不要） */
+    async listSmileMapPosts(n = 500) {
+      await api.connect();
+      const q = fs.query(fs.collection(db, COL.smile), fs.where('publish', '==', 'map'), fs.limit(n));
+      const snap = await withTimeout(fs.getDocs(q), 20000, 'listSmileMap');
+      return snap.docs.map((d) => toPost(d.id, 'smile', d.data()));
+    },
+
+    /**
+     * 笑顔の回数の記録。ドキュメント ID = 投稿 ID なので、再送しても二重に数えない。
+     * 'ok' 書けた・すでにあった / 'denied' ルールで拒否（古いルール・投稿が無い）/ 'retry' 通信など（あとで再送）
+     */
+    async logSmile({ type, refId, dayKey = null }) {
+      try { await api.connect(); } catch { return 'retry'; }
+      const ref = fs.doc(db, 'smile_log', refId);
+      try {
+        const snap = await withTimeout(fs.getDoc(ref), 10000, 'logCheck');
+        if (snap.exists()) return 'ok';
+      } catch { /* 読めなくても書き込みは試す */ }
+      const data = { uid: api.uid, type, refId, createdAt: fs.serverTimestamp() };
+      if (dayKey) data.dayKey = dayKey;
+      try {
+        await withTimeout(fs.setDoc(ref, data), 15000, 'log');
+        return 'ok';
+      } catch (e) {
+        console.warn('smile_log not written (will retry)', e && (e.code || e.message));
+        return e && e.code === 'permission-denied' ? 'denied' : 'retry';
+      }
     },
 
     async listDaily(dayKey) {

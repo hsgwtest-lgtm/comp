@@ -14,5 +14,14 @@
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
     { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "SMILE CAM（顔に見えるモノを撮る）",
+      "short_name": "SMILE CAM",
+      "description": "散歩中に見つけた「顔に見えるモノ」をすぐに撮影",
+      "url": "./#/cam",
+      "icons": [{ "src": "icons/shortcut-cam.png", "sizes": "96x96", "type": "image/png" }]
+    }
   ]
 }
