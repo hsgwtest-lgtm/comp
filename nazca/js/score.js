@@ -121,6 +121,29 @@ export function distanceToScore(D) {
   return 100 / (1 + (D / D50) ** P);
 }
 
+// ---- 総合ポイント（PTS）= 正確さ(%) × サイズ倍率 × 10 ----
+// サイズは「重ねた絵の実寸で測った、お題の線の長さ（m）」。歩いた距離ではないので、往復で水増しできない。
+// 倍率は対数で伸び、100m で ×1.0、400m で ×1.4、1.6km で ×1.8、3.2km 以上で ×2.0（上限）。
+export const SIZE_MIN = 100;
+export const SIZE_MAX = 3200;
+
+export function sizeMultiplier(sizeM) {
+  if (!(sizeM > SIZE_MIN)) return 1;
+  const m = 1 + Math.log2(sizeM / SIZE_MIN) / Math.log2(SIZE_MAX / SIZE_MIN);
+  return Math.round(Math.min(2, m) * 100) / 100;
+}
+
+export function totalPoints(score, sizeM) {
+  return Math.round((Number(score) || 0) * sizeMultiplier(sizeM) * 10);
+}
+
+/** 投稿のポイント（PTS 導入前の投稿は倍率 ×1.0 として扱う） */
+export function postPoints(p) {
+  return Number.isFinite(p.pts) ? p.pts : Math.round((Number(p.score) || 0) * 10);
+}
+
+export const fmtPts = (n) => Math.round(n).toLocaleString('en-US');
+
 /**
  * 採点の準備。軌跡を正規化しておき、向きを変えながら何度でも重ね直せるようにする。
  * @param templateStrokes [[[x,y],...],...] お題（画面座標）
@@ -146,6 +169,7 @@ export function prepareMatch(templateStrokes, trailStrokes) {
 
   const T = resampleStrokes(tNorm, T_SAMPLES);
   const TS = segArray(tNorm);
+  const tplLen = totalLength(tNorm);   // お題の線の長さ（お題の単位。外接矩形の長辺 = 1）
   const W = resampleStrokes(unit, W_SAMPLES);
   const WS = segArray(simp);
   const Wt = new Float64Array(W.length);
@@ -254,9 +278,14 @@ export function prepareMatch(templateStrokes, trailStrokes) {
       evalD(fit.deg, fit.s, fit.tx, fit.ty);
       let cov = 0;
       for (let i = 0; i < dT.length; i++) if (dT[i] <= COVER_TOL) cov++;
-      const score = Math.round(distanceToScore(fit.D) * 10) / 10;
+      const score = Math.min(100, Math.max(0, Math.round(distanceToScore(fit.D) * 10) / 10));
+      // お題の 1 単位 = size0 / s メートル（軌跡は size0 で割って単位化し、s 倍してお題に重ねている）
+      const sizeM = Math.round((tplLen * size0) / Math.max(1e-9, fit.s));
       return {
-        score: Math.min(100, Math.max(0, score)),
+        score,
+        sizeM,
+        mult: sizeMultiplier(sizeM),
+        pts: totalPoints(score, sizeM),
         D: fit.D,
         coverage: cov / dT.length,
         templateNorm: tNorm,
@@ -274,6 +303,6 @@ export function prepareMatch(templateStrokes, trailStrokes) {
  */
 export function scoreTrack(templateStrokes, trailStrokes, opts = {}) {
   const m = prepareMatch(templateStrokes, trailStrokes);
-  if (!m) return { score: 0, D: Infinity, coverage: 0, templateNorm: normalizeTemplate(templateStrokes), trailNorm: [], rotation: 0, fit: null };
+  if (!m) return { score: 0, sizeM: 0, mult: 1, pts: 0, D: Infinity, coverage: 0, templateNorm: normalizeTemplate(templateStrokes), trailNorm: [], rotation: 0, fit: null };
   return m.result(m.best(opts));
 }

@@ -2,7 +2,7 @@
 // お題そのものを GPS ノイズ付きで（どの向きでも）歩いた場合・街路（碁盤目）に沿って近似した場合・
 // 半分だけ歩いた場合・別のお題を歩いた場合・でたらめに歩いた場合のスコアを比較する。
 import { TEMPLATES } from '../js/challenges.js';
-import { scoreTrack, prepareMatch } from '../js/score.js';
+import { scoreTrack, prepareMatch, sizeMultiplier, totalPoints } from '../js/score.js';
 
 function rng(seed) {
   return () => {
@@ -145,6 +145,25 @@ for (const id of ['note', 'bolt']) {
   // ガイドの向き（-63°）をヒントに渡しても同じ結果
   const withPrior = m.best({ prior: [-63] });
   if (Math.abs(m.result(withPrior).score - sBest) > 0.3) { fails++; console.log('  ! prior 付きの結果が違う'); }
+}
+// PTS = 正確さ × サイズ倍率 × 10（サイズは重ねた絵の実寸でのお題の線の長さ）
+{
+  const heart = TEMPLATES.find((x) => x.id === 'heart');
+  const len = (st) => st.reduce((a, s) => a + s.slice(1).reduce((b, p, i) => b + Math.hypot(p[0] - s[i][0], p[1] - s[i][1]), 0), 0);
+  for (const size of [40, 160, 640]) {
+    const placed = placeTemplate(heart, size, 33, 0, 0);
+    const r = scoreTrack(heart.strokes, placed);
+    const real = len(placed);
+    console.log(`heart ${size}m wide: sizeM ${r.sizeM} (real ${Math.round(real)}) x${r.mult} -> ${r.pts} PTS`);
+    if (Math.abs(r.sizeM - real) / real > 0.03) { fails++; console.log('  ! サイズの推定が実寸と 3% 以上ずれる'); }
+  }
+  const tr = placeTemplate(heart, 160, 0, 0, 0);
+  const once = scoreTrack(heart.strokes, tr); const twice = scoreTrack(heart.strokes, tr.concat(tr.map((s) => s.slice().reverse())));
+  console.log('walked twice:', once.sizeM, '->', twice.sizeM);
+  if (Math.abs(twice.sizeM - once.sizeM) > once.sizeM * 0.02) { fails++; console.log('  ! 往復でサイズが水増しされる'); }
+  const ok = sizeMultiplier(100) === 1 && sizeMultiplier(400) === 1.4 && sizeMultiplier(1600) === 1.8 && sizeMultiplier(3200) === 2 && sizeMultiplier(9000) === 2 && totalPoints(92.4, 520) === Math.round(92.4 * sizeMultiplier(520) * 10);
+  console.log('multiplier table ok:', ok);
+  if (!ok) fails++;
 }
 console.log('empty:', scoreTrack(TEMPLATES[0].strokes, []).score, ' single point:', scoreTrack(TEMPLATES[0].strokes, [[[0, 0]]]).score);
 if (fails) { console.log(`FAIL: ${fails}`); process.exit(1); }

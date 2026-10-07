@@ -14,8 +14,10 @@ import { unpackGeo, unpackFlat, haversine, distToSegments, boundsCenter, segment
 import { ANCIENT, TYPE_LABEL, GROUP_NOTE, ANCIENT_FOOT, COUNTRY_ORDER, ancientSegments } from '../ancient.js';
 import { openDetail } from './detail.js';
 import { formatStamp } from '../time.js';
+import { postPoints, fmtPts } from '../score.js';
 import { sfx } from '../sfx.js';
 import { DEFAULT_CENTER } from '../config.js';
+import { createLocateControl } from '../compass.js';
 
 const FOUND_KEY = 'nazca.found';
 const VISIT_KEY = 'nazca.visited';
@@ -29,8 +31,9 @@ const RADAR_N = 4;         // RADAR で矢印を出す数
 const RAD_ = Math.PI / 180;
 const REVEAL_MS = 1400;    // 発見したときに線が描かれていく時間
 
-const C_CHALK = pack('#f3dcab');
-const C_MINE = pack(PAL.mint);
+// みんなの地上絵は、投稿ごとにレトロな派手色を 1 色（id から決まるので毎回同じ色）。自分の作品はミント
+const POST_COLORS = ['#ff5d8f', '#ffd23f', '#6b8cff', '#ff8f3d', '#c77dff', '#4fd8ff', '#a3ff5c', '#ff6b5a'];
+const C_OUTLINE = pack('#0b0820');
 const C_ANCIENT = pack(PAL.sand);
 const C_SHADOW = pack('#06121a');
 const C_ARROW = pack(PAL.pink);
@@ -86,7 +89,7 @@ function makeGlyph(id, kind, segs, extra) {
 function glyphTitle(g) {
   if (g.kind === 'ancient') return g.ancient.ja;
   const p = g.post;
-  if (p.kind === 'daily') return `${p.challengeName || 'DAILY'}（${Number(p.score || 0).toFixed(1)}%）`;
+  if (p.kind === 'daily') return `${p.challengeName || 'DAILY'}（${fmtPts(postPoints(p))} PTS）`;
   return p.title || 'UNTITLED';
 }
 
@@ -94,7 +97,7 @@ function glyphThumb(g, size = 40) {
   const cv = makePixelCanvas(size, size, 'thumb');
   // 作品は作者が決めた向き（shape は回転済み）、世界の地上絵は正立した図柄
   const strokes = g.kind === 'ancient' ? g.ancient.strokes : (g.post && g.post.shape ? unpackFlat(g.post.shape) : segmentsToXY(g.segs));
-  renderLayers(cv, [{ strokes, color: g.kind === 'ancient' ? PAL.sand : (g.mine ? PAL.mint : '#f3dcab') }], { pad: 3, bg: '#47291b', grid: false });
+  renderLayers(cv, [{ strokes, color: g.kind === 'ancient' ? PAL.sand : g.hex }], { pad: 3, bg: '#47291b', grid: false });
   return cv;
 }
 
@@ -179,6 +182,7 @@ export default {
     const drawGlyph = (buf, g, du, frac, col) => {
       const k = map.scale;
       const limit = frac * g.total;
+      const lines = [];
       for (let si = 0; si < g.m.length; si++) {
         const st = g.m[si]; const cum = g.lens[si];
         if (cum[0] > limit) break;
@@ -195,8 +199,16 @@ export default {
             break;
           }
         }
-        buf.polyline(pts.map(([x, y]) => [x + 1, y + 1]), C_SHADOW, 2);
-        buf.polyline(pts, col, 2);
+        lines.push(pts);
+      }
+      if (g.kind === 'ancient') {
+        // 世界の地上絵: 大地に刻んだような砂色の線＋影
+        for (const pts of lines) buf.polyline(pts.map(([x, y]) => [x + 1, y + 1]), C_SHADOW, 2);
+        for (const pts of lines) buf.polyline(pts, col, 2);
+      } else {
+        // みんなの作品: 太めの派手色を、暗いふちどりで浮かび上がらせる（ふちどりを先に全部描く）
+        for (const pts of lines) buf.polyline(pts, C_OUTLINE, 5);
+        for (const pts of lines) buf.polyline(pts, col, 3);
       }
     };
 
@@ -225,7 +237,7 @@ export default {
         const du = Math.round(f.uc - g.cu);
         const b = screenBox(g, du);
         if (b.x1 < -20 || b.y1 < -20 || b.x0 > map.cssW + 20 || b.y0 > map.cssH + 20) continue;
-        const col = g.kind === 'ancient' ? C_ANCIENT : (g.mine ? C_MINE : C_CHALK);
+        const col = g.kind === 'ancient' ? C_ANCIENT : g.col;
         if (b.size < 12 && rv == null) {
           const [x, y] = map.mercToScreen(g.cu + du, g.cv);
           buf.sprite(Math.round(x / k) - 2, Math.round(y / k) - 2, GEM, { '#': col });
@@ -336,7 +348,7 @@ export default {
       if (type === 'visited') sfx.visit(); else sfx.discover();
       updateCounters();
       // 地上絵が画面に収まるように寄る（作者が決めた向き・中心があればそれで）
-      if (type === 'found' && locMode === 'free') {
+      if (type === 'found' && loc.mode === 'free') {
         const v = g.view;
         const bearing = v ? v.rot : map.bearing;
         // 発見カードに隠れないよう、カードより上の領域に収める
@@ -409,8 +421,7 @@ export default {
     // ---- ATLAS（世界の地上絵の図鑑）----
     // 見つけたもの: 名前・解説（VIEW）・その場所へ（GO）。まだのもの: 国名と距離だけ。WARP で近くまで飛べる
     const flyTo = (g, warp) => {
-      locMode = 'free'; updateLocBtn();
-      map.follow = false;
+      loc.set('free');
       if (!warp) {
         const t = map.computeFit(g.segs.flat(), 40, 19, null, map.bearing);
         map.setView(t.center, t.zoom);
@@ -518,15 +529,8 @@ export default {
       if (best) { sfx.blip(); openGlyph(best); }
     };
 
-    // ---- 現在地・コンパス ----
-    let locMode = 'free'; // free | follow | compass
-    let watchId = null; let lastFix = null; let heading = null; let orientOn = false; let headingAt = 0;
-    const updateLocBtn = () => {
-      locBtn.innerHTML = icon(locMode === 'compass' ? 'heading' : 'locate');
-      locBtn.classList.toggle('on', locMode === 'follow');
-      locBtn.classList.toggle('on-compass', locMode === 'compass');
-      locBtn.setAttribute('aria-label', locMode === 'follow' ? 'コンパスモード' : locMode === 'compass' ? '北を上に戻す' : '現在地');
-    };
+    // ---- 現在地・コンパス（計測画面と共通: js/compass.js）----
+    let watchId = null; let lastFix = null;
     const checkVisits = (fix) => {
       if (discovering) return;
       for (const g of glyphs) {
@@ -539,12 +543,11 @@ export default {
     const onFix = (pos) => {
       lastFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, t: pos.timestamp || Date.now() };
       map.setMe(lastFix);
-      if (locMode === 'compass') map.center = lastFix;
       checkVisits(lastFix);
     };
     const onGeoErr = (e) => {
       if (e && e.code === 1) {
-        locMode = 'free'; updateLocBtn();
+        loc.set('free');
         modal({ title: 'NO PERMISSION', body: '<p>位置情報の利用が許可されていません。設定で許可すると、現在地のまわりを探したり、地上絵を訪れたりできます。</p>' });
       }
     };
@@ -552,71 +555,22 @@ export default {
       if (watchId != null || !('geolocation' in navigator)) return;
       watchId = navigator.geolocation.watchPosition(onFix, onGeoErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
     };
-    const onOrient = (e) => {
-      let hd = null;
-      if (typeof e.webkitCompassHeading === 'number') hd = e.webkitCompassHeading;
-      else if (e.absolute && typeof e.alpha === 'number') hd = 360 - e.alpha;
-      if (hd == null || Number.isNaN(hd)) return;
-      const so = (screen.orientation && screen.orientation.angle) || 0;
-      hd = (hd + so) % 360;
-      heading = heading == null ? hd : heading + normDeg(hd - heading) * 0.25;
-      headingAt = performance.now();
-      map.meHeading = heading;
-      if (locMode === 'compass') {
-        map.bearing = heading;
-        if (lastFix) map.center = lastFix;
-      }
-      map.requestRender();
-    };
-    const enableCompass = async () => {
-      try {
-        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-          const r = await DeviceOrientationEvent.requestPermission();
-          if (r !== 'granted') return false;
-        }
-        if (!orientOn) {
-          window.addEventListener('deviceorientationabsolute', onOrient);
-          window.addEventListener('deviceorientation', onOrient);
-          orientOn = true;
-        }
-        return true;
-      } catch { return false; }
-    };
-    locBtn.addEventListener('click', async () => {
-      sfx.blip();
-      if (locMode === 'free') {
-        locMode = 'follow'; startWatch();
-        map.follow = true;
-        if (lastFix) map.animateTo({ center: lastFix, zoom: Math.max(map.zoom, 16) }, 400);
-        else toast('現在地を探しています…');
-      } else if (locMode === 'follow') {
-        const ok = await enableCompass();
-        if (!ok) { toast('この端末ではコンパスが使えません'); return; }
-        locMode = 'compass';
-        map.follow = true;
-        const t0 = performance.now();
-        setTimeout(() => {
-          if (locMode === 'compass' && headingAt < t0) { locMode = 'follow'; updateLocBtn(); toast('方位が取得できませんでした'); }
-        }, 2000);
-      } else {
-        locMode = 'follow';
-        map.animateTo({ bearing: 0 }, 350);
-      }
-      updateLocBtn();
+    const loc = createLocateControl(map, locBtn, {
+      icons: (m) => icon(m === 'compass' ? 'heading' : 'locate'),
+      getFix: () => lastFix,
+      onFollow: startWatch,
     });
-    map.onUserMove = () => { if (locMode !== 'free') { locMode = 'free'; updateLocBtn(); } };
-    map.onCompass = () => { if (locMode === 'compass') { locMode = 'follow'; updateLocBtn(); } };
+    locBtn.addEventListener('click', () => { sfx.blip(); loc.next(); });
+    map.onUserMove = () => loc.userMoved();
+    map.onCompass = () => loc.compassReset();
     sc.add(() => {
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
-      if (orientOn) {
-        window.removeEventListener('deviceorientationabsolute', onOrient);
-        window.removeEventListener('deviceorientation', onOrient);
-      }
+      loc.dispose();
     });
 
     // ---- データ ----
     for (const a of ANCIENT) glyphs.push(makeGlyph(`ancient/${a.id}`, 'ancient', ancientSegments(a), { ancient: a }));
-    updateRadarBtn(); updateLocBtn(); updateCounters();
+    updateRadarBtn(); updateCounters();
 
     let alive = true;
     const loadPosts = async () => {
@@ -632,7 +586,8 @@ export default {
         const segs = unpackGeo(p.geo);
         if (!segs.length) continue;
         const mine = p.uid && p.uid === s.uid;
-        const g = makeGlyph(`${p.kind}/${p.id}`, p.kind, segs, { post: p, mine, view: p.view && Number.isFinite(p.view.rot) ? p.view : null });
+        const hex = mine ? PAL.mint : POST_COLORS[Math.floor(hash01(`${p.kind}/${p.id}`) * POST_COLORS.length)];
+        const g = makeGlyph(`${p.kind}/${p.id}`, p.kind, segs, { post: p, mine, hex, col: pack(hex), view: p.view && Number.isFinite(p.view.rot) ? p.view : null });
         glyphs.push(g);
         if (mine && !found.has(g.id)) found.add(g.id);
       }
@@ -674,7 +629,7 @@ export default {
     }
     if (!saved && 'geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition((pos) => {
-        if (!alive || locMode !== 'free') return;
+        if (!alive || loc.mode !== 'free') return;
         lastFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, t: Date.now() };
         map.setMe(lastFix);
         map.setView(lastFix, 15);

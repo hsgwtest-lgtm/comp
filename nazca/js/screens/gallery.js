@@ -6,7 +6,7 @@ import { challengeDayKey, shiftDayKey, dayKeyShort, dayKeyRangeLabel, formatStam
 import { getChallenge } from '../daily.js';
 import { unpackFlat } from '../geo.js';
 import { store, rankDaily, reactionCount } from '../store/index.js';
-import { scoreLabel } from '../score.js';
+import { scoreLabel, postPoints, fmtPts, sizeMultiplier } from '../score.js';
 import { openDetail } from './detail.js';
 import { sfx } from '../sfx.js';
 
@@ -78,7 +78,7 @@ export default {
 
       const board = h('div', { class: 'board frame' },
         h('div', { class: 'board-head' }, h('span', { class: 'blink' }, dayKey === today ? "TODAY'S HIGH SCORE" : 'HIGH SCORE')),
-        h('div', { class: 'board-cols' }, h('span', {}, 'RANK'), h('span', {}, 'NAME'), h('span', {}, 'SCORE')));
+        h('div', { class: 'board-cols' }, h('span', {}, 'RANK'), h('span', {}, 'NAME'), h('span', {}, 'PTS')));
       if (!ranked.length) {
         board.append(h('div', { class: 'empty' },
           h('p', {}, 'NO ENTRY YET'),
@@ -91,7 +91,9 @@ export default {
           h('span', { class: 'rk' }, ORD(r)),
           thumb(p, 24),
           h('span', { class: 'nm' }, h('span', { class: 'jp' }, p.name || '???'), p.cpu ? h('em', { class: 'cpu' }, 'CPU') : null),
-          h('span', { class: 'sc' }, p.score.toFixed(1).padStart(5, '0'), h('em', { class: `rank-${scoreLabel(p.score)}` }, scoreLabel(p.score))),
+          h('span', { class: 'sc' },
+            h('span', {}, fmtPts(postPoints(p)), h('small', {}, `${p.score.toFixed(1)}% ×${sizeMultiplier(p.sizeM).toFixed(2)}`)),
+            h('em', { class: `rank-${scoreLabel(p.score)}` }, scoreLabel(p.score))),
           reactionCount(p) ? h('span', { class: 'rx', html: `${icon('heart')}${reactionCount(p)}` }) : null);
         row.addEventListener('click', () => { sfx.blip(); openDetail(p).then((r) => load(!(r && r.deleted))); });
         board.append(row);

@@ -5,6 +5,9 @@ rules_version = '2';
 // ・SKETCH-ONLY 投稿は緯度経度（geo / view）を含められない（位置情報をサーバーに残さない）
 // ・view は MAP MODE の作品の表示（中心の緯度経度と向き）
 // ・投稿の編集はリアクション（reactions）の更新のみ。削除は投稿者本人のみ
+// ・pts / sizeM は総合ポイントと絵の大きさ（v2.2）。theme は笑顔のお題（'smile' のみ）
+// ・smile_posts は撮影した「顔に見えるモノ」（64×64 のドット絵）。gallery 公開は位置情報（pos）を含められない
+// ・smile_log は笑顔の回数の記録（追記専用。ドキュメント ID = 投稿 ID なので二重に数えない）
 // ・文字数の上限はアプリ側（名前10字・タイトル20字）で管理し、ここでは大きめの安全上限だけを設ける
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -46,6 +49,11 @@ service cloud.firestore {
           && isValidView(d);
     }
 
+    // 任意の数値項目（無いか、範囲内の数値）
+    function optNumber(d, k, lo, hi) {
+      return !d.keys().hasAny([k]) || (d[k] is number && d[k] >= lo && d[k] <= hi);
+    }
+
     function validReactionsUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
           && request.resource.data.reactions.keys().hasOnly(['like', 'star', 'oneup', 'gg']);
@@ -55,14 +63,17 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'publish', 'distance', 'duration', 'shape', 'geo', 'view', 'v',
-                                                  'dayKey', 'challengeId', 'challengeName', 'score', 'reactions', 'createdAt'])
+                                                  'dayKey', 'challengeId', 'challengeName', 'score', 'pts', 'sizeM', 'theme', 'reactions', 'createdAt'])
         && request.resource.data.kind == 'daily'
         && isValidBase(request.resource.data)
         && request.resource.data.score is number
         && request.resource.data.score >= 0 && request.resource.data.score <= 100
         && request.resource.data.dayKey is string
         && request.resource.data.dayKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && request.resource.data.challengeId is string && request.resource.data.challengeId.size() <= 40;
+        && request.resource.data.challengeId is string && request.resource.data.challengeId.size() <= 40
+        && optNumber(request.resource.data, 'pts', 0, 2000)
+        && optNumber(request.resource.data, 'sizeM', 0, 1000000)
+        && (!request.resource.data.keys().hasAny(['theme']) || request.resource.data.theme == 'smile');
       allow update: if signedIn() && validReactionsUpdate();
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
@@ -77,6 +88,43 @@ service cloud.firestore {
         && request.resource.data.title is string && request.resource.data.title.size() <= 80;
       allow update: if signedIn() && validReactionsUpdate();
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // 撮影した笑顔（顔に見えるモノ）
+    match /smile_posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['kind', 'uid', 'name', 'title', 'comment', 'pixels', 'pal', 'publish', 'pos', 'reactions', 'v', 'createdAt'])
+        && request.resource.data.kind == 'smile'
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40
+        && (!request.resource.data.keys().hasAny(['title']) || (request.resource.data.title is string && request.resource.data.title.size() <= 80))
+        && (!request.resource.data.keys().hasAny(['comment']) || (request.resource.data.comment is string && request.resource.data.comment.size() <= 160))
+        && request.resource.data.pixels is string && request.resource.data.pixels.size() >= 100 && request.resource.data.pixels.size() <= 3000
+        && request.resource.data.pal is number
+        && request.resource.data.reactions == {}
+        && request.resource.data.createdAt == request.time
+        && ((request.resource.data.publish == 'gallery' && !request.resource.data.keys().hasAny(['pos']))
+            || (request.resource.data.publish == 'map'
+                && request.resource.data.pos is map
+                && request.resource.data.pos.keys().hasOnly(['lat', 'lng'])
+                && request.resource.data.pos.lat is number && request.resource.data.pos.lat >= -90 && request.resource.data.pos.lat <= 90
+                && request.resource.data.pos.lng is number && request.resource.data.pos.lng >= -180 && request.resource.data.pos.lng <= 180));
+      allow update: if signedIn() && validReactionsUpdate();
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // 笑顔の回数の記録（追記専用。投稿を消しても記録は残る）
+    match /smile_log/{logId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'type', 'refId', 'dayKey', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.type in ['geoglyph', 'found']
+        && request.resource.data.refId == logId
+        && request.resource.data.createdAt == request.time
+        && (!request.resource.data.keys().hasAny(['dayKey']) || request.resource.data.dayKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+      allow update, delete: if false;
     }
 
     // お題の上書き（管理者が Firebase コンソールから作成）

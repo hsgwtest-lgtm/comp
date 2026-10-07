@@ -2,7 +2,7 @@
 // アプリ本体（同一オリジンのファイル）を事前キャッシュしてオフラインでも起動できるようにする。
 // 地図タイル・Firebase など外部への通信には関与しない。
 // ★ ファイルを更新したら VERSION を上げること（README 参照）
-const VERSION = 'nazca-v2.1.1';
+const VERSION = 'nazca-v2.2.0';
 
 const PRECACHE = [
   './',
@@ -23,6 +23,7 @@ const PRECACHE = [
   './js/time.js',
   './js/challenges.js',
   './js/ancient.js',
+  './js/compass.js',
   './js/daily.js',
   './js/geo.js',
   './js/score.js',

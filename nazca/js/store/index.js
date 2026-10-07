@@ -1,5 +1,6 @@
 // データ保存先の切り替え（Firebase / ローカル）
 import { FIREBASE_CONFIG } from '../config.js';
+import { postPoints } from '../score.js';
 
 const NAME_KEY = 'nazca.name';
 let impl = null;
@@ -37,14 +38,15 @@ export function store() {
   return impl;
 }
 
-/** 投稿をランキング用に「各プレイヤーのベスト1件」に絞って並べる */
+/** 投稿をランキング用に「各プレイヤーのベスト1件」に絞って、総合ポイント（PTS）順に並べる */
 export function rankDaily(posts) {
+  const cmp = (a, b) => postPoints(b) - postPoints(a) || (b.score || 0) - (a.score || 0) || a.createdAt - b.createdAt;
   const best = new Map();
   for (const p of posts) {
     const cur = best.get(p.uid);
-    if (!cur || p.score > cur.score || (p.score === cur.score && p.createdAt < cur.createdAt)) best.set(p.uid, p);
+    if (!cur || cmp(p, cur) < 0) best.set(p.uid, p);
   }
-  return [...best.values()].sort((a, b) => b.score - a.score || a.createdAt - b.createdAt);
+  return [...best.values()].sort(cmp);
 }
 
 export const STAMPS = [

@@ -9,6 +9,8 @@ import { templateFromDoc } from '../challenges.js';
 
 const SDK = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}`;
 const COL = { daily: 'daily_posts', free: 'free_posts' };
+// あとからルールに追加した項目（古いルールでは拒否されるので、そのときは外して再送する）
+const OPTIONAL_KEYS = ['view', 'pts', 'sizeM', 'theme'];
 
 function withTimeout(p, ms, label) {
   let t;
@@ -103,11 +105,12 @@ export function createFirebaseStore(config) {
       try {
         await withTimeout(fs.setDoc(ref, data), 20000, 'post');
       } catch (e) {
-        // 古い Firestore ルール（view 未対応）のままでも投稿できるよう、向き情報を外して再送
-        if (e && e.code === 'permission-denied' && 'view' in data) {
-          console.warn('Firestore rules do not accept "view" yet. Posting without it. Please update firestore.rules.');
+        // 古い Firestore ルールのままでも投稿できるよう、あとから追加した項目を外して再送
+        const extra = OPTIONAL_KEYS.filter((k) => k in data);
+        if (e && e.code === 'permission-denied' && extra.length) {
+          console.warn(`Firestore rules do not accept ${extra.join(', ')} yet. Posting without them. Please update firestore.rules.`);
           api.rulesOutdated = true;
-          delete data.view;
+          for (const k of extra) delete data[k];
           await withTimeout(fs.setDoc(ref, data), 20000, 'post');
         } else {
           throw e;

@@ -1,7 +1,7 @@
 // ローカルモード：Firebase 未設定時に、この端末の localStorage だけで動く保存先。
 // ランキングが寂しくならないよう、お題を CPU が歩いた作品（実際に採点したもの）を混ぜる。
 import { builtinChallenge, templateById, TEMPLATES } from '../challenges.js';
-import { scoreTrack } from '../score.js';
+import { scoreTrack, totalPoints } from '../score.js';
 import { bboxOf } from '../geo.js';
 
 const UID_KEY = 'nazca.uid';
@@ -70,9 +70,10 @@ function cpuDaily(dayKey) {
   const posts = levels.map((noise, i) => {
     const strokes = wobble(tpl.strokes, rand, noise, (rand() - 0.5) * 30);
     const score = scoreTrack(tpl.strokes, strokes, { range: 45 }).score; // CPU はほぼ正立なので探索を絞って軽く
+    const sizeM = Math.round(250 + rand() * 2400);
     return {
       id: `cpu-${dayKey}-${i}`, kind: 'daily', uid: `cpu-${i}`, name: CPU_NAMES[i], cpu: true,
-      dayKey, challengeId: tpl.id, challengeName: tpl.ja, score,
+      dayKey, challengeId: tpl.id, challengeName: tpl.ja, score, sizeM, pts: totalPoints(score, sizeM),
       distance: Math.round(600 + rand() * 1800), duration: Math.round(900 + rand() * 1800),
       publish: 'sketch', shape: toShape(strokes),
       createdAt: Date.parse(`${dayKey}T07:${String(10 + i * 7).padStart(2, '0')}:00Z`),

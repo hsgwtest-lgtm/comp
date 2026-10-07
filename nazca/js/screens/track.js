@@ -10,6 +10,7 @@ import { normalizeTemplate } from '../score.js';
 import { segmentsToXY, makeProjector, totalLength, fmtDeg } from '../geo.js';
 import { sfx } from '../sfx.js';
 import { GPS } from '../config.js';
+import { createLocateControl } from '../compass.js';
 
 export function isDebug() {
   try {
@@ -95,7 +96,6 @@ export default {
     const map = new PixelMap(mapEl, { zoom: 17 });
     map.follow = true;
     let gotFirstFix = false;
-    map.onUserMove = () => followBtn.classList.add('on-attn');
 
     // ---- ツール ----
     let view = 'map';
@@ -106,13 +106,18 @@ export default {
       viewBtns[v].addEventListener('click', () => { sfx.blip(); setView(v); });
       viewSeg.append(viewBtns[v]);
     }
-    const followBtn = h('button', { type: 'button', class: 'tool-btn', 'aria-label': '現在地に戻る', html: icon('target') });
-    followBtn.addEventListener('click', () => {
-      sfx.blip();
-      map.follow = true; followBtn.classList.remove('on-attn');
-      const f = tracker.lastFix;
-      if (f) map.setView(f, Math.max(map.zoom, 16)); else toast('GPS を探しています…');
+    // 現在地ボタン: 追従（北が上）→ コンパス（進行方向が上）→ 追従 …（EXPLORE と共通）
+    const followBtn = h('button', { type: 'button', class: 'tool-btn' });
+    const loc = createLocateControl(map, followBtn, {
+      icons: (m) => icon(m === 'compass' ? 'heading' : 'target'),
+      getFix: () => tracker.lastFix,
+      followZoom: 17,
     });
+    loc.set('follow');
+    followBtn.addEventListener('click', () => { sfx.blip(); loc.next(); });
+    map.onUserMove = () => { loc.userMoved(); followBtn.classList.add('on-attn'); };
+    map.onCompass = () => loc.compassReset();
+    sc.add(() => loc.dispose());
     const tools = h('div', { class: 'stage-tools' }, viewSeg, h('div', { class: 'grow' }), followBtn);
     stage.append(tools);
 
@@ -163,7 +168,7 @@ export default {
       map.requestRender();
     };
     const guidePlace = () => {
-      map.follow = false;
+      loc.set('free');
       if (guideState === 'set' && guidePlacement) {
         guideRot = guidePlacement.rot;
         map.animateTo({ center: guidePlacement.center, zoom: guidePlacement.zoom, bearing: guidePlacement.bearing }, 350);
@@ -372,7 +377,7 @@ export default {
 
     // 復元した計測は地図を軌跡に合わせる
     if (tracker.pointCount) {
-      map.follow = false;
+      loc.set('free');
       map.fitBounds(tracker.segments.flat(), 40, 18);
       refreshTrail();
       toast('前回の計測を復元しました。RESUME で再開');
@@ -398,7 +403,7 @@ export default {
           for (let i = 0; i <= 40; i++) ring.push(pr.toLatLng([Math.cos(i / 40 * 2 * Math.PI) * 120 + i * 3, Math.sin(i / 40 * 4 * Math.PI) * 80]));
           strokes = [ring];
         }
-        map.follow = false;
+        loc.set('free');
         stopSim = tracker.simulate(strokes);
         autoBtn.textContent = 'STOP SIM';
       }, 'btn-sm btn-ghost');

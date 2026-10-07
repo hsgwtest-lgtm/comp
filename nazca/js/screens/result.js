@@ -6,7 +6,7 @@ import { PixelMap, normDeg } from '../pixelmap.js';
 import { finishedTrack } from '../tracker.js';
 import { navigate } from '../router.js';
 import { formatDuration, dayKeyShort, challengeDayKey } from '../time.js';
-import { prepareMatch, scoreLabel, distanceToScore, wrapDeg } from '../score.js';
+import { prepareMatch, scoreLabel, distanceToScore, wrapDeg, fmtPts, SIZE_MAX } from '../score.js';
 import { segmentsToXY, toRelativeShape, toGeoShape, unpackFlat, boundsCenter, fmtDeg } from '../geo.js';
 import { templateById } from '../challenges.js';
 import { getName, setName, store } from '../store/index.js';
@@ -14,7 +14,7 @@ import { sfx } from '../sfx.js';
 import { DAILY_MIN_DISTANCE, TITLE_MAX } from '../config.js';
 import { isDebug } from './track.js';
 
-const BEST_KEY = (dayKey) => `nazca.best.${dayKey}`;
+const BEST_KEY = (dayKey) => `nazca.bestpts.${dayKey}`;
 
 export default {
   mount(el) {
@@ -66,14 +66,22 @@ export default {
       h('p', { class: 'match-hint' }, 'ドラッグか2本指で回せます。位置と大きさは自動で合わせます'));
 
     // ---- スコア ----
-    const scoreNum = h('div', { class: 'score-num' }, '--.-');
-    const scoreRank = h('div', { class: 'score-rank' }, '');
+    const scoreNum = h('div', { class: 'score-num' }, '0');
+    const scoreRank = h('em', { class: 'score-rank' }, '');
     const scoreSub = h('div', { class: 'score-sub' }, '');
+    const accEl = h('b', {}, '--.-%');
+    const sizeEl = h('b', {}, '×-.--');
+    const sizeM = h('small', {}, '');
     const scoreBtn = btn(`${icon('star')} SCORE!`, () => doScore(), 'btn-pink btn-xl btn-block');
     const scoreReady = h('div', { class: 'score-ready' }, h('p', {}, '向きを決めたら採点！'), scoreBtn);
     const rematchBtn = h('button', { type: 'button', class: 'linkish rematch', onclick: () => { sfx.blip(); setPhase('match'); } }, '向きを合わせ直す');
     const scoreShow = h('div', { class: 'hidden' },
-      h('div', { class: 'score-row' }, scoreNum, h('span', { class: 'pct' }, '%'), scoreRank), scoreSub, rematchBtn);
+      h('div', { class: 'score-row' }, scoreNum, h('span', { class: 'pct' }, 'PTS')),
+      h('div', { class: 'score-parts' },
+        h('div', { class: 'sp' }, h('label', {}, 'ACCURACY'), h('div', {}, accEl, scoreRank)),
+        h('div', { class: 'sp-x' }, '×'),
+        h('div', { class: 'sp' }, h('label', {}, 'SIZE'), h('div', {}, sizeEl, sizeM))),
+      scoreSub, rematchBtn);
     const scoreBox = kind === 'daily'
       ? h('section', { class: 'score-box frame' }, h('label', {}, 'SCORE'), scoreReady, scoreShow)
       : null;
@@ -312,24 +320,29 @@ export default {
     const reveal = () => {
       let prevBest = 0;
       try { prevBest = Number(localStorage.getItem(BEST_KEY(f.dayKey)) || 0); } catch { /* noop */ }
-      const isBest = result.score > prevBest;
-      if (isBest) { try { localStorage.setItem(BEST_KEY(f.dayKey), String(result.score)); } catch { /* noop */ } }
+      const isBest = result.pts > prevBest;
+      if (isBest) { try { localStorage.setItem(BEST_KEY(f.dayKey), String(result.pts)); } catch { /* noop */ } }
       scoreRank.textContent = '';
       scoreSub.textContent = '';
+      sizeEl.textContent = `×${result.mult.toFixed(2)}`;
+      sizeM.textContent = result.sizeM >= 1000 ? `${(result.sizeM / 1000).toFixed(1)}km` : `${result.sizeM}m`;
+      sizeEl.parentElement.title = `お題の線の長さ（あなたの絵の大きさ）。${SIZE_MAX / 1000}km 以上で ×2.00`;
       // カウントアップ演出
       const t0 = performance.now(); const dur = 1300;
       const step = (now) => {
         const k = Math.min(1, (now - t0) / dur);
-        const v = result.score * (1 - (1 - k) ** 3);
-        scoreNum.textContent = v.toFixed(1).padStart(5, '0');
+        const e = 1 - (1 - k) ** 3;
+        scoreNum.textContent = fmtPts(result.pts * e);
+        accEl.textContent = `${(result.score * e).toFixed(1)}%`;
         if (k < 1) { if (Math.floor(now / 60) % 2) sfx.tick(); requestAnimationFrame(step); return; }
-        scoreNum.textContent = result.score.toFixed(1).padStart(5, '0');
+        scoreNum.textContent = fmtPts(result.pts);
+        accEl.textContent = `${result.score.toFixed(1)}%`;
         const r = scoreLabel(result.score);
         scoreRank.textContent = r;
         scoreRank.className = `score-rank rank-${r}`;
         scoreSub.innerHTML = isBest
           ? `<span class="blink new-rec">NEW RECORD!</span>`
-          : `TODAY BEST ${prevBest.toFixed(1)}%`;
+          : `TODAY BEST ${fmtPts(prevBest)} PTS`;
         sfx.fanfare(result.score >= 60);
       };
       requestAnimationFrame(step);
@@ -345,7 +358,7 @@ export default {
         if (!frame.touched) { frame.rot = autoRot; updateFrame(); }
         draw(result.trailNorm);
       } else {
-        result = { score: 0 };
+        result = { score: 0, sizeM: 0, mult: 1, pts: 0 };
       }
       setPhase('scored');
       reveal();
@@ -467,7 +480,7 @@ export default {
         const c = frame.center || autoCenter;
         post.view = { lat: Math.round(c.lat * 1e5) / 1e5, lng: Math.round(c.lng * 1e5) / 1e5, rot: frame.rot };
       }
-      if (kind === 'daily') Object.assign(post, { dayKey: f.dayKey, challengeId: tpl.id, challengeName: tpl.ja, score: result.score });
+      if (kind === 'daily') Object.assign(post, { dayKey: f.dayKey, challengeId: tpl.id, challengeName: tpl.ja, score: result.score, pts: result.pts, sizeM: result.sizeM });
       else post.title = titleInput.value.trim().slice(0, TITLE_MAX) || 'UNTITLED';
 
       busy = true;
@@ -480,7 +493,7 @@ export default {
         finishedTrack.clear();
         try { sessionStorage.setItem('nazca.highlight', id); } catch { /* noop */ }
         sfx.coin();
-        toast(s.rulesOutdated ? 'POSTED!（向きの保存には Firestore ルールの更新が必要です）' : 'POSTED!', s.rulesOutdated ? 4200 : 2400);
+        toast(s.rulesOutdated ? 'POSTED!（一部の項目の保存には Firestore ルールの更新が必要です）' : 'POSTED!', s.rulesOutdated ? 4200 : 2400);
         navigate(kind === 'daily' ? `gallery/daily/${f.dayKey}` : 'gallery/free');
       } catch (e) {
         console.error(e);

@@ -5,7 +5,7 @@ import { PixelMap } from '../pixelmap.js';
 import { unpackFlat, unpackGeo } from '../geo.js';
 import { store, STAMPS } from '../store/index.js';
 import { formatDuration, formatStamp } from '../time.js';
-import { scoreLabel } from '../score.js';
+import { scoreLabel, postPoints, fmtPts, sizeMultiplier } from '../score.js';
 import { sfx } from '../sfx.js';
 
 export function stampButtons(post, onChange) {
@@ -56,7 +56,8 @@ export async function openDetail(post, { onChange, onDelete } = {}) {
   }
   const head = post.kind === 'daily'
     ? h('div', { class: 'detail-head' },
-      h('div', { class: 'd-score' }, h('b', {}, post.score.toFixed(1)), h('span', {}, '%'), h('em', { class: `rank-${scoreLabel(post.score)}` }, scoreLabel(post.score))),
+      h('div', { class: 'd-score' }, h('b', {}, fmtPts(postPoints(post))), h('span', {}, 'PTS'), h('em', { class: `rank-${scoreLabel(post.score)}` }, scoreLabel(post.score))),
+      h('div', { class: 'd-parts' }, `ACCURACY ${post.score.toFixed(1)}% × SIZE ×${sizeMultiplier(post.sizeM).toFixed(2)}${post.sizeM ? `（${post.sizeM >= 1000 ? `${(post.sizeM / 1000).toFixed(1)}km` : `${post.sizeM}m`}）` : ''}`),
       h('div', { class: 'd-odai' }, `ODAI: ${post.challengeName || '-'}`))
     : h('div', { class: 'detail-head' }, h('div', { class: 'd-title' }, post.title || 'UNTITLED'));
 
