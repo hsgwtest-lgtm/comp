@@ -8,6 +8,7 @@ import result from './screens/result.js';
 import gallery from './screens/gallery.js';
 import explore from './screens/explore.js';
 import cam from './screens/cam.js';
+import howto from './screens/howto.js';
 
 // iOS Safari のピンチによるページ拡大を抑止（地図は独自にピンチ操作する）
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -21,6 +22,7 @@ route('result', result);
 route('gallery', gallery);
 route('explore', explore);
 route('cam', cam);
+route('howto', howto);
 
 (async () => {
   try {

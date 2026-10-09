@@ -1,11 +1,12 @@
 // 1. MODE SELECT（タイトル・メイン画面）
-import { h, btn, askName, showHelp, scope, modal, confirmDialog, esc, smileTag } from '../ui.js';
+import { h, btn, askName, scope, modal, confirmDialog, esc, smileTag } from '../ui.js';
 import { icon, makePixelCanvas, traceAnimation, PAL } from '../pixel.js';
 import { navigate } from '../router.js';
 import { challengeDayKey, nextSwitch, formatCountdown, dayKeyRangeLabel, shiftDayKey } from '../time.js';
 import { quickChallenge, getChallenge } from '../daily.js';
 import { isSmile } from '../challenges.js';
 import { debugOdai } from './track.js';
+import { HOWTO_KEY, openHowto } from './howto.js';
 import { getName, setName, store } from '../store/index.js';
 import { activeTrack, finishedTrack } from '../tracker.js';
 import { sfx } from '../sfx.js';
@@ -117,8 +118,8 @@ export default {
 
     const soundBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'サウンド', html: icon(sfx.muted ? 'mute' : 'sound') });
     soundBtn.addEventListener('click', () => { const m = sfx.toggle(); soundBtn.innerHTML = icon(m ? 'mute' : 'sound'); });
-    const helpBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '遊び方', html: icon('help') });
-    helpBtn.addEventListener('click', () => { sfx.blip(); showHelp(); });
+    const helpBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '遊び方（HOW TO PLAY）', html: icon('help') });
+    helpBtn.addEventListener('click', () => { sfx.select(); openHowto(); });
 
     const badge = h('button', { type: 'button', class: 'badge' });
     badge.addEventListener('click', () => {
@@ -160,6 +161,7 @@ export default {
       btn(`${icon('camera')} SMILE CAM`, () => { sfx.select(); navigate('cam'); }, 'btn-block btn-pink'),
       btn(`${icon('compass')} EXPLORE`, () => { sfx.select(); navigate('explore'); }, 'btn-block btn-earth'),
       btn(`${icon('trophy')} GALLERY &amp; RANKING`, () => { sfx.select(); navigate('gallery/daily'); }, 'btn-block btn-ghost'),
+      btn(`${icon('book')} HOW TO PLAY（遊び方）`, () => { sfx.select(); openHowto(); }, 'btn-block btn-ghost btn-howto'),
     );
 
     el.append(
@@ -186,14 +188,12 @@ export default {
     tick();
     sc.interval(tick, 1000);
 
-    // 初回起動時は遊び方を表示
+    // はじめて開いたときは遊び方ガイドへ（計測の途中・未投稿の作品があるときは出さない）
+    let alive = true;
     try {
-      if (!localStorage.getItem('nazca.seenHelp')) {
-        localStorage.setItem('nazca.seenHelp', '1');
-        setTimeout(() => showHelp(), 400);
-      }
+      if (!localStorage.getItem(HOWTO_KEY) && !a && !f) setTimeout(() => { if (alive) openHowto(); }, 300);
     } catch { /* noop */ }
 
-    return { unmount() { stopAnim(); sc.dispose(); } };
+    return { unmount() { alive = false; stopAnim(); sc.dispose(); } };
   },
 };

@@ -17,6 +17,13 @@
   ],
   "shortcuts": [
     {
+      "name": "HOW TO PLAY（遊び方）",
+      "short_name": "遊び方",
+      "description": "nazca の遊び方と楽しみ方をアニメーションで見る",
+      "url": "./#/howto",
+      "icons": [{ "src": "icons/shortcut-howto.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
       "name": "SMILE CAM（顔に見えるモノを撮る）",
       "short_name": "SMILE CAM",
       "description": "散歩中に見つけた「顔に見えるモノ」をすぐに撮影",
