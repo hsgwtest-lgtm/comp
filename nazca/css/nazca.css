@@ -997,3 +997,58 @@ p { margin: 0 0 8px; }
 @media (prefers-reduced-motion: reduce) {
   .ht-in-r, .ht-in-l, .ht-blink, .ht-fbtn.pulse, .ht-ov.pop, .ht-more { animation: none; }
 }
+
+/* ==========================================================
+   おまかせ GUIDE（道に合わせて自動で置く）
+   ========================================================== */
+.gp-auto .btn { margin: 0 4px 8px; font-size: 11px; }
+.ag-overlay {
+  position: fixed; inset: 0; z-index: 45; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start;
+  padding: calc(var(--safe-t, 0px) + 16px) 12px calc(var(--safe-b) + 16px); background: rgba(5, 3, 16, .86);
+}
+.ag-box { width: min(100%, 420px); margin: 0; padding: 14px 14px 10px; }
+.ag-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.ag-title { font: 11px/1.4 var(--display); color: var(--mint); }
+.ag-title .ico { width: 11px; height: auto; vertical-align: -1px; }
+.ag-odai { font-size: 13px; color: var(--dim); white-space: nowrap; }
+.ag-scan-wrap { position: relative; width: min(100%, 300px, 42dvh); margin: 0 auto 10px; aspect-ratio: 1; box-shadow: 0 0 0 3px var(--line), 0 0 0 6px var(--mute); }
+.ag-scan { width: 100%; height: 100%; display: block; }
+.ag-scan-label {
+  position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); padding: 4px 8px 3px;
+  font: 8px/1 var(--display); color: var(--mint); background: rgba(11, 8, 32, .82); white-space: nowrap;
+  animation: htBlink 1s steps(1) infinite;
+}
+.ag-steps { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 13px; color: var(--mute); }
+.ag-steps li { display: flex; align-items: center; gap: 6px; }
+.ag-steps li i { width: 9px; height: 9px; flex: none; box-shadow: inset 0 0 0 2px var(--mute); }
+.ag-steps li.cur { color: var(--ink); }
+.ag-steps li.cur i { background: var(--mint); box-shadow: none; animation: htBlink .6s steps(1) infinite; }
+.ag-steps li.done { color: var(--dim); }
+.ag-steps li.done i { background: var(--sand-dk); box-shadow: none; }
+.ag-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ag-bar { flex: 1; display: flex; gap: 2px; padding: 3px; background: var(--night-deep); box-shadow: 0 0 0 2px var(--mute); }
+.ag-bar i { flex: 1; height: 10px; background: var(--panel); }
+.ag-bar i.on { background: var(--mint); }
+.ag-pct { min-width: 4ch; text-align: right; font: 9px/1 var(--display); color: var(--mint); }
+.ag-tip { min-height: 3.2em; margin: 6px 0 4px; font-size: 13px; line-height: 1.6; color: var(--dim); }
+.ag-note, .ag-msg { font-size: 13px; line-height: 1.6; color: var(--sand); }
+.ag-msg { color: var(--ink); text-align: center; }
+.ag-actions .btn { margin-top: 6px; }
+.ag-lead { margin: 0 0 10px; font-size: 13px; line-height: 1.6; color: var(--dim); }
+.ag-cards { display: flex; flex-direction: column; gap: 10px; }
+.ag-card { display: flex; gap: 10px; padding: 8px; background: var(--panel); box-shadow: 0 0 0 2px var(--line); }
+.ag-card.best { box-shadow: 0 0 0 2px var(--line), 0 0 0 4px var(--pink); }
+.ag-card-cv { flex: none; width: 112px; height: 112px; box-shadow: 0 0 0 2px var(--line); }
+.ag-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ag-card-head { display: flex; gap: 6px; align-items: center; }
+.ag-no { font-size: 12px; color: var(--dim); }
+.ag-rec { padding: 3px 5px 2px; font-size: 11px; background: var(--pink); color: #330414; }
+.ag-score { display: flex; align-items: baseline; gap: 3px; margin: 4px 0 2px; }
+.ag-score small { font-size: 11px; color: var(--dim); }
+.ag-score b { font: 20px/1 var(--display); font-weight: normal; color: var(--ink); }
+.ag-score em { margin-left: 6px; font: 12px/1 var(--display); font-style: normal; color: var(--gold); }
+.ag-facts { list-style: none; margin: 2px 0 6px; padding: 0; font-size: 12px; line-height: 1.55; color: var(--dim); }
+.ag-card-info .btn { margin-top: auto; padding-top: 9px; padding-bottom: 8px; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .ag-scan-label, .ag-steps li.cur i { animation: none; }
+}

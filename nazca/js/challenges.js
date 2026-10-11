@@ -287,7 +287,7 @@ export const SMILE_TEMPLATES = [
   { id: 'smile-28', name: 'ROUND LAUGH', ja: 'マルメワライ', level: 2, pool: 'rotation', theme: 'smile',
     strokes: [[[0.375, 0.344], [0.367, 0.375], [0.344, 0.398], [0.312, 0.406], [0.281, 0.398], [0.258, 0.375], [0.25, 0.344], [0.258, 0.312], [0.281, 0.29], [0.312, 0.281], [0.344, 0.29], [0.367, 0.312], [0.375, 0.344]], [[0.75, 0.344], [0.742, 0.375], [0.719, 0.398], [0.688, 0.406], [0.656, 0.398], [0.633, 0.375], [0.625, 0.344], [0.633, 0.312], [0.656, 0.29], [0.688, 0.281], [0.719, 0.29], [0.742, 0.312], [0.75, 0.344]], [[0.703, 0.531], [0.701, 0.558], [0.696, 0.584], [0.688, 0.609], [0.676, 0.633], [0.661, 0.655], [0.644, 0.675], [0.624, 0.692], [0.602, 0.707], [0.578, 0.719], [0.553, 0.727], [0.527, 0.733], [0.5, 0.734], [0.473, 0.733], [0.447, 0.727], [0.422, 0.719], [0.398, 0.707], [0.376, 0.692], [0.356, 0.675], [0.339, 0.655], [0.324, 0.633], [0.312, 0.609], [0.304, 0.584], [0.299, 0.558], [0.297, 0.531], [0.297, 0.531], [0.703, 0.531]]] },
   // 29 たれ目大笑い（斜め線の目＋大きく開いた口）
-  { id: 'smile-29', name: 'DROOPY LAUGH', ja: 'タレメワライ', level: 1, pool: 'rotation', theme: 'smile',
+  { id: 'smile-29', name: 'DROOPY LAUGH', ja: 'タレメワライ', level: 1, pool: 'normal', theme: 'smile',
     strokes: [[[0.234, 0.297], [0.391, 0.391]], [[0.766, 0.297], [0.609, 0.391]], [[0.703, 0.531], [0.701, 0.558], [0.696, 0.584], [0.688, 0.609], [0.676, 0.633], [0.661, 0.655], [0.644, 0.675], [0.624, 0.692], [0.602, 0.707], [0.578, 0.719], [0.553, 0.727], [0.527, 0.733], [0.5, 0.734], [0.473, 0.733], [0.447, 0.727], [0.422, 0.719], [0.398, 0.707], [0.376, 0.692], [0.356, 0.675], [0.339, 0.655], [0.324, 0.633], [0.312, 0.609], [0.304, 0.584], [0.299, 0.558], [0.297, 0.531], [0.297, 0.531], [0.703, 0.531]]] },
   // 30 縦目大笑い（縦線の目＋大きく開いた口）
   { id: 'smile-30', name: 'TALL LAUGH', ja: 'タテメワライ', level: 1, pool: 'normal', theme: 'smile',
@@ -316,6 +316,18 @@ const ORDER_V3 = ['tree', 'snail', 'bolt', 'fuji', 'rabbit', 'sword', 'shoe', 'u
 const SMILE_ORDER = ['smile-09', 'smile-04', 'smile-08', 'smile-13', 'smile-01', 'smile-28', 'smile-03', 'smile-19',
   'smile-22', 'smile-29', 'smile-02', 'smile-07', 'smile-27', 'smile-06', 'smile-10'];
 
+// v4（2026-10-11 から）: 描きにくかったお題をローテーションから外す
+//   通常: カタツムリ（不評）・ヨット・テガミ・オバケ・カップ ／ 笑顔: タレメワライ（smile-29 は控えに）
+//   （住宅街の道に沿って描いたときの予想スコアが低かったもの。お題のデータは過去のランキング表示のため残す）
+// v3 の続きの順番のまま外したお題を飛ばすので、ORDER_V4_FROM（笑顔の日 smile-08）以降もそれまでの予定は変わらない。
+//   j = dayNumber(dayKey) - dayNumber(ORDER_V4_FROM)
+//   j が偶数 → SMILE_ORDER_V4[(j / 2) % 14]、奇数 → ORDER_V4[((j - 1) / 2) % 24]
+export const ORDER_V4_FROM = '2026-10-11';
+const ORDER_V4 = ['bolt', 'fuji', 'rabbit', 'sword', 'shoe', 'umbrella', 'moon', 'gem', 'apple', 'rocket', 'tulip', 'cat',
+  'heart', 'key', 'star', 'fish', 'mushroom', 'house', 'note', 'crown', 'arrow', 'ufo', 'onigiri', 'tree'];
+const SMILE_ORDER_V4 = ['smile-08', 'smile-13', 'smile-01', 'smile-28', 'smile-03', 'smile-19', 'smile-22', 'smile-02',
+  'smile-07', 'smile-27', 'smile-06', 'smile-10', 'smile-09', 'smile-04'];
+
 const byId = new Map([...TEMPLATES, ...SMILE_TEMPLATES].map((t) => [t.id, t]));
 
 export function templateById(id) {
@@ -328,9 +340,14 @@ const mod = (n, m) => ((n % m) + m) % m;
 export function builtinChallenge(dayKey = challengeDayKey()) {
   if (dayKey < ORDER_V2_FROM) return byId.get(ORDER_V1[mod(dayNumber(dayKey), ORDER_V1.length)]);
   if (dayKey < ORDER_V3_FROM) return byId.get(ORDER_V2[mod(dayNumber(dayKey) - dayNumber(ORDER_V2_FROM), ORDER_V2.length)]);
-  const i = dayNumber(dayKey) - dayNumber(ORDER_V3_FROM);
-  if (i % 2 === 0) return byId.get(SMILE_ORDER[mod(i / 2, SMILE_ORDER.length)]);
-  return byId.get(ORDER_V3[mod((i - 1) / 2, ORDER_V3.length)]);
+  if (dayKey < ORDER_V4_FROM) {
+    const i = dayNumber(dayKey) - dayNumber(ORDER_V3_FROM);
+    if (i % 2 === 0) return byId.get(SMILE_ORDER[mod(i / 2, SMILE_ORDER.length)]);
+    return byId.get(ORDER_V3[mod((i - 1) / 2, ORDER_V3.length)]);
+  }
+  const j = dayNumber(dayKey) - dayNumber(ORDER_V4_FROM);
+  if (j % 2 === 0) return byId.get(SMILE_ORDER_V4[mod(j / 2, SMILE_ORDER_V4.length)]);
+  return byId.get(ORDER_V4[mod((j - 1) / 2, ORDER_V4.length)]);
 }
 
 export const isSmile = (t) => !!(t && t.theme === 'smile');

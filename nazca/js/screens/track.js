@@ -10,9 +10,10 @@ import { templateById } from '../challenges.js';
 import { normalizeTemplate } from '../score.js';
 import { segmentsToXY, makeProjector, totalLength, fmtDeg, centroidLatLng } from '../geo.js';
 import { sfx } from '../sfx.js';
-import { GPS } from '../config.js';
+import { GPS, AUTO_GUIDE } from '../config.js';
 import { createLocateControl } from '../compass.js';
 import { openCamOverlay } from './cam.js';
+import { openOmakase } from './omakase.js';
 
 export function isDebug() {
   try {
@@ -158,6 +159,8 @@ export default {
     let guideRot = 0;                // 画面に対するお題の回転（度）
     let guideStrokes = null;         // 固定後の緯度経度
     let guidePlacement = null;       // 固定したときの地図表示 { center, zoom, bearing, rot }
+    let guideRoute = null;           // おまかせ GUIDE の道順（[lat, lng] の線の配列。描く順）
+    const omakaseOn = !!tpl && (AUTO_GUIDE === true || (AUTO_GUIDE === 'debug' && debug));
     const tplNorm = tpl ? normalizeTemplate(tpl.strokes) : null;
     const tplLen = tplNorm ? totalLength(tplNorm) : 0;
     const C_GUIDE = pack(PAL.pink); const C_RET = pack(PAL.ink);
@@ -170,6 +173,7 @@ export default {
         holdBtn('+1°', () => { guideRot = normDeg(guideRot + 1); map.requestRender(); }, 'btn-sm btn-ghost', { 'aria-label': '右に1°回す' }),
         btn('OFF', () => guideOff(), 'btn-sm btn-ghost'),
         btn('SET', () => guideSet(), 'btn-sm btn-pink')),
+      omakaseOn ? h('div', { class: 'gp-auto' }, btn(`${icon('star')} おまかせ（まわりの道に合わせる）`, () => startOmakase(), 'btn-sm btn-mint btn-block')) : null,
       h('p', { class: 'gp-hint' }, '地図を動かして位置、ピンチで大きさ、2本指で向き'));
 
     const guideScreenPts = () => {
@@ -187,7 +191,7 @@ export default {
     };
     const saveGuide = () => {
       try {
-        if (guideState === 'set') localStorage.setItem(GUIDE_KEY, JSON.stringify({ startedAt: tracker.startedAt || 0, strokes: guideStrokes, placement: guidePlacement }));
+        if (guideState === 'set') localStorage.setItem(GUIDE_KEY, JSON.stringify({ startedAt: tracker.startedAt || 0, strokes: guideStrokes, placement: guidePlacement, route: guideRoute }));
         else localStorage.removeItem(GUIDE_KEY);
       } catch { /* noop */ }
     };
@@ -205,6 +209,7 @@ export default {
         map.animateTo({ center: guidePlacement.center, zoom: guidePlacement.zoom, bearing: guidePlacement.bearing }, 350);
       }
       guideState = 'placing';
+      guideRoute = null;              // 動かすと、おまかせの道順は合わなくなるので消す
       map.setGuide(null);
       showGuideState();
     };
@@ -218,7 +223,7 @@ export default {
       sfx.select();
     };
     const guideOff = () => {
-      guideState = 'off'; guideStrokes = null; guidePlacement = null;
+      guideState = 'off'; guideStrokes = null; guidePlacement = null; guideRoute = null;
       map.setGuide(null);
       saveGuide();
       showGuideState();
@@ -233,6 +238,73 @@ export default {
     };
     map.onViewChange = updateGuidePanel;
 
+    // ---- おまかせ GUIDE ----
+    const startOmakase = () => {
+      sfx.select();
+      const fix = tracker.lastFix && Date.now() - tracker.lastFix.t < 120000 ? tracker.lastFix : null;
+      const me = fix ? { lat: fix.lat, lng: fix.lng } : { ...map.center };
+      if (closeOmakase) closeOmakase();
+      closeOmakase = openOmakase({ tpl, me, meKnown: !!fix, onApply: applyOmakase });
+    };
+    let closeOmakase = null;
+    sc.add(() => { if (closeOmakase) closeOmakase(); });
+    const applyOmakase = (o) => {
+      loc.set('free');
+      // お題の大きさ（画面の短辺 × GUIDE_FRAC）が o.size m になるズーム
+      const mpp = o.size / (Math.min(map.cssW, map.cssH) * GUIDE_FRAC);
+      const zoom = Math.log2((Math.cos(o.center.lat * RAD) * 2 * Math.PI * 6378137) / (256 * mpp));
+      map.setView(o.center, zoom, 0);
+      guideRot = normDeg(o.rot);
+      guideSet();
+      guideRoute = o.routeLL;
+      saveGuide();
+      // 道順の全体と現在地が見えるように
+      const pts = guideRoute.flat().map(([lat, lng]) => ({ lat, lng }));
+      if (tracker.lastFix) pts.push(tracker.lastFix);
+      map.fitBounds(pts, 40, 18);
+      toast('おすすめの道順を出しました。白い点線を 1 → 2 … の順に、矢印の向きに歩いてね', 3600);
+    };
+    const DIGITS = {
+      1: ['.#.', '##.', '.#.', '.#.', '###'], 2: ['###', '..#', '###', '#..', '###'], 3: ['###', '..#', '.##', '..#', '###'],
+      4: ['#.#', '#.#', '###', '..#', '..#'], 5: ['###', '#..', '###', '..#', '###'], 6: ['###', '#..', '###', '#.#', '###'],
+      7: ['###', '..#', '..#', '.#.', '.#.'], 8: ['###', '#.#', '###', '#.#', '###'], 9: ['###', '#.#', '###', '..#', '###'],
+    };
+    const C_ROUTE = pack(PAL.ink); const C_ROUTE_SH = pack('#0b0820');
+    const drawRoute = (buf) => {
+      const k = map.scale;
+      const toPx = ([lat, lng]) => { const [x, y] = map.toScreen({ lat, lng }); return [x / k, y / k]; };
+      const strokes = guideRoute.map((s) => s.map(toPx));
+      for (const pts of strokes) {
+        buf.polyline(pts.map(([x, y]) => [x + 1, y + 1]), C_ROUTE_SH, 1, [2, 2]);
+        buf.polyline(pts, C_ROUTE, 1, [2, 2]);
+        // 進む向きの矢印（約 34 ドットごと）
+        let acc = 17;
+        for (let i = 1; i < pts.length; i++) {
+          const [ax, ay] = pts[i - 1]; const [bx, by] = pts[i]; const L = Math.hypot(bx - ax, by - ay);
+          if (L < 1e-6) continue;
+          const ux = (bx - ax) / L; const uy = (by - ay) / L;
+          let d = 34 - acc;
+          while (d <= L) {
+            const px = ax + ux * d; const py = ay + uy * d;
+            for (const [c, t] of [[C_ROUTE_SH, 2], [C_ROUTE, 1]]) {
+              buf.line(px - ux * 3 - uy * 2.5, py - uy * 3 + ux * 2.5, px, py, c, t);
+              buf.line(px - ux * 3 + uy * 2.5, py - uy * 3 - ux * 2.5, px, py, c, t);
+            }
+            d += 34;
+          }
+          acc = (acc + L) % 34;
+        }
+      }
+      // 描く順番（線の始まりに 1, 2, …）
+      strokes.forEach((pts, i) => {
+        const [x, y] = pts[0]; const X = Math.round(x) - 2; const Y = Math.round(y) - 3;
+        buf.rect(X - 1, Y - 1, 7, 9, C_ROUTE_SH);
+        buf.rect(X, Y, 5, 7, pack(PAL.gold));
+        buf.sprite(X + 1, Y + 1, DIGITS[Math.min(9, i + 1)], { '#': C_ROUTE_SH });
+      });
+    };
+    map.onDrawUnder = (buf) => { if (guideState === 'set' && guideRoute) drawRoute(buf); };
+
     if (tpl) {
       guideBtn.addEventListener('click', () => {
         sfx.blip();
@@ -245,7 +317,7 @@ export default {
         try {
           const g = JSON.parse(localStorage.getItem(GUIDE_KEY) || 'null');
           if (g && g.strokes && g.startedAt === (snap.startedAt || 0)) {
-            guideStrokes = g.strokes; guidePlacement = g.placement; guideState = 'set';
+            guideStrokes = g.strokes; guidePlacement = g.placement; guideRoute = g.route || null; guideState = 'set';
             map.setGuide(guideStrokes);
           }
         } catch { /* noop */ }

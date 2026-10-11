@@ -4,57 +4,19 @@
 // 2本指で回転・拡大（ピンチの中点を軸に）。回転時は Mode 7 風に最近傍で回す。
 import { TILE_URL, TILE_ATTRIBUTION, TILE_ATTRIBUTION_URL, DEFAULT_CENTER } from './config.js';
 import { PixelBuffer, pack, PAL } from './pixel.js';
+import { CLASSES, classLUT } from './tilecolor.js';
 
 const TILE = 256;
 const RAD = Math.PI / 180;
 const MAX_TILE_ZOOM = 19;
 const ROTATE_START_DEG = 10;   // この角度だけ指を回すと回転が始まる（ピンチ中の誤回転防止）
 
-// OSM 標準スタイルの代表色 → レトロパレット（優先度が高いほど縮小時に残る）
-const CLASSES = [
-  { src: [242, 239, 233], out: '#211c47', pri: 1.0 },   // 陸地
-  { src: [224, 223, 223], out: '#26204f', pri: 1.0 },   // 市街地
-  { src: [217, 208, 201], out: '#352e68', pri: 1.1 },   // 建物
-  { src: [196, 182, 171], out: '#3e3678', pri: 1.1 },   // 建物の縁
-  { src: [255, 255, 255], out: '#bfae7e', pri: 2.2 },   // 細い道路
-  { src: [247, 250, 191], out: '#e3c873', pri: 2.4 },   // 二次道路
-  { src: [252, 214, 164], out: '#f2c14e', pri: 2.6 },   // 主要道路
-  { src: [249, 178, 156], out: '#ff9f5a', pri: 2.6 },   // 幹線
-  { src: [232, 146, 162], out: '#ff7a8a', pri: 2.6 },   // 高速
-  { src: [250, 128, 114], out: '#e0806e', pri: 2.0 },   // 歩道（破線）
-  { src: [170, 211, 223], out: '#2c58a8', pri: 1.6 },   // 水域
-  { src: [205, 235, 176], out: '#1d5f47', pri: 1.2 },   // 草地
-  { src: [200, 250, 204], out: '#1d5f47', pri: 1.2 },   // 公園
-  { src: [173, 209, 158], out: '#184f3c', pri: 1.2 },   // 森
-  { src: [222, 246, 192], out: '#1d5f47', pri: 1.2 },   // 庭園
-  { src: [238, 207, 207], out: '#3a2f5c', pri: 1.0 },   // 商業地
-  { src: [255, 241, 186], out: '#3a3358', pri: 1.0 },   // 学校など
-  { src: [112, 112, 112], out: '#6b64a8', pri: 1.8 },   // 鉄道
-  { src: [160, 160, 160], out: '#4f4890', pri: 1.2 },
-  { src: [0, 0, 0], out: '#211c47', pri: 0.3 },         // 文字（ほぼ消す）
-  { src: [60, 60, 60], out: '#211c47', pri: 0.3 },
-];
-
-let LUT = null; // 5bit RGB → クラス番号
-function buildLUT() {
-  LUT = new Uint8Array(32768);
-  for (let r = 0; r < 32; r++) for (let g = 0; g < 32; g++) for (let b = 0; b < 32; b++) {
-    const R = r * 8 + 4; const G = g * 8 + 4; const B = b * 8 + 4;
-    let best = 0; let bd = Infinity;
-    for (let i = 0; i < CLASSES.length; i++) {
-      const [sr, sg, sb] = CLASSES[i].src;
-      const d = 2 * (R - sr) ** 2 + 4 * (G - sg) ** 2 + 3 * (B - sb) ** 2;
-      if (d < bd) { bd = d; best = i; }
-    }
-    LUT[(r << 10) | (g << 5) | b] = best;
-  }
-}
 const CLASS_COLORS = CLASSES.map((c) => pack(c.out));
 const CLASS_PRI = CLASSES.map((c) => c.pri);
 
 /** タイル画像を減色し、1/scale の解像度（優先度付き多数決）に落とす */
 function quantizeTile(img, scale) {
-  if (!LUT) buildLUT();
+  const LUT = classLUT();
   const full = document.createElement('canvas');
   full.width = TILE; full.height = TILE;
   const fctx = full.getContext('2d', { willReadFrequently: true });
@@ -137,7 +99,7 @@ export class PixelMap {
     this.trail = []; this.moves = []; this.guide = null; this.me = null; this.meHeading = null;
     this.follow = false;
     this.onUserMove = null; this.onTap = null; this.onViewChange = null;
-    this.onDrawOverlay = null; this.onAfterRender = null; this.onCompass = null;
+    this.onDrawOverlay = null; this.onDrawUnder = null; this.onAfterRender = null; this.onCompass = null;
     this.tiles = new Map();
     this.failures = 0;
     this.destroyed = false;
@@ -531,6 +493,7 @@ export class PixelMap {
     if (this.guide) {
       for (const s of this.guide) buf.polyline(s.map(toPx), C_GUIDE, 1, [3, 2]);
     }
+    if (this.onDrawUnder) this.onDrawUnder(buf, this);   // 軌跡より下（おまかせ GUIDE の道順など）
     for (const s of this.moves) {
       if (s.length < 2) continue;
       const pts = s.map(toPx);
