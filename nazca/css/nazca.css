@@ -826,7 +826,6 @@ p { margin: 0 0 8px; }
 .ht-in-l { animation: htInL .24s steps(4); }
 @keyframes htInR { from { transform: translateX(24px); opacity: .2; } }
 @keyframes htInL { from { transform: translateX(-24px); opacity: .2; } }
-.btn-howto { font-size: 12px; padding: 12px 16px 10px; }
 
 /* もくじ */
 .ht-tocl { display: flex; flex-direction: column; gap: 4px; }
@@ -1002,6 +1001,18 @@ p { margin: 0 0 8px; }
    おまかせ GUIDE（道に合わせて自動で置く）
    ========================================================== */
 .gp-auto .btn { margin: 0 4px 8px; font-size: 11px; }
+/* NEW（まだ使っていない新しい機能の印） */
+.tool-btn.has-new { position: relative; }
+.tool-btn.has-new::after {
+  content: 'NEW'; position: absolute; top: -10px; right: -8px; padding: 3px 3px 2px;
+  background: var(--pink); color: #fff; font: 8px/1 var(--display);
+  box-shadow: 0 0 0 2px var(--line); pointer-events: none; animation: newBlink 1.2s steps(2) infinite;
+}
+.new-tag { display: inline-block; margin-left: 6px; padding: 3px 3px 2px; vertical-align: middle; background: var(--pink); color: #fff; font: 8px/1 var(--display); }
+@keyframes newBlink { 50% { background: var(--pink-dk); } }
+/* 新しい機能のお知らせ（タイトル画面で一度だけ） */
+.modal-news .news-head { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font: 14px/1.4 var(--display); color: var(--gold); }
+.modal-news .news-head .ico { flex: none; width: 18px; height: auto; }
 .ag-overlay {
   position: fixed; inset: 0; z-index: 45; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start;
   padding: calc(var(--safe-t, 0px) + 16px) 12px calc(var(--safe-b) + 16px); background: rgba(5, 3, 16, .86);
@@ -1050,5 +1061,5 @@ p { margin: 0 0 8px; }
 .ag-facts { list-style: none; margin: 2px 0 6px; padding: 0; font-size: 12px; line-height: 1.55; color: var(--dim); }
 .ag-card-info .btn { margin-top: auto; padding-top: 9px; padding-bottom: 8px; font-size: 11px; }
 @media (prefers-reduced-motion: reduce) {
-  .ag-scan-label, .ag-steps li.cur i { animation: none; }
+  .ag-scan-label, .ag-steps li.cur i, .tool-btn.has-new::after { animation: none; }
 }

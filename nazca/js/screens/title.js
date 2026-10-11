@@ -6,7 +6,7 @@ import { challengeDayKey, nextSwitch, formatCountdown, dayKeyRangeLabel, shiftDa
 import { quickChallenge, getChallenge } from '../daily.js';
 import { isSmile } from '../challenges.js';
 import { debugOdai } from './track.js';
-import { HOWTO_KEY, openHowto } from './howto.js';
+import { HOWTO_KEY, NEWS_KEY, openHowto } from './howto.js';
 import { getName, setName, store } from '../store/index.js';
 import { activeTrack, finishedTrack } from '../tracker.js';
 import { sfx } from '../sfx.js';
@@ -118,7 +118,8 @@ export default {
 
     const soundBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'サウンド', html: icon(sfx.muted ? 'mute' : 'sound') });
     soundBtn.addEventListener('click', () => { const m = sfx.toggle(); soundBtn.innerHTML = icon(m ? 'mute' : 'sound'); });
-    const helpBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '遊び方（HOW TO PLAY）', html: icon('help') });
+    // 遊び方ガイド（HOW TO PLAY）は右上の ？ から
+    const helpBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label': '遊び方（HOW TO PLAY）', title: '遊び方', html: icon('help') });
     helpBtn.addEventListener('click', () => { sfx.select(); openHowto(); });
 
     const badge = h('button', { type: 'button', class: 'badge' });
@@ -161,7 +162,6 @@ export default {
       btn(`${icon('camera')} SMILE CAM`, () => { sfx.select(); navigate('cam'); }, 'btn-block btn-pink'),
       btn(`${icon('compass')} EXPLORE`, () => { sfx.select(); navigate('explore'); }, 'btn-block btn-earth'),
       btn(`${icon('trophy')} GALLERY &amp; RANKING`, () => { sfx.select(); navigate('gallery/daily'); }, 'btn-block btn-ghost'),
-      btn(`${icon('book')} HOW TO PLAY（遊び方）`, () => { sfx.select(); openHowto(); }, 'btn-block btn-ghost btn-howto'),
     );
 
     el.append(
@@ -188,10 +188,29 @@ export default {
     tick();
     sc.interval(tick, 1000);
 
-    // はじめて開いたときは遊び方ガイドへ（計測の途中・未投稿の作品があるときは出さない）
+    // はじめて開いたときは遊び方ガイドへ。もう見た人には、新しい機能のお知らせを一度だけ
+    // （計測の途中・未投稿の作品があるときは出さない）
     let alive = true;
+    const showNews = async () => {
+      const v = await modal({
+        title: 'NEW!',
+        cls: 'modal-news',
+        body: h('div', {},
+          h('p', { class: 'news-head', html: `${icon('star')}<span>おまかせ GUIDE</span>` }),
+          h('p', {}, 'DAILY CHALLENGE の GUIDE に「おまかせ」ができました。現在地のまわり（半径 600m）の道を調べて、お題をきれいに描ける置き方と道順を自動で探します。'),
+          h('p', { class: 'muted small' }, '使い方は、右上の ？ からいつでも見られます。')),
+        actions: [{ label: 'あとで', value: false, cls: 'btn-ghost' }, { label: '使い方を見る', value: true, cls: 'btn-mint' }],
+      });
+      if (v === true && alive) { sfx.select(); openHowto('omakase'); }
+    };
     try {
-      if (!localStorage.getItem(HOWTO_KEY) && !a && !f) setTimeout(() => { if (alive) openHowto(); }, 300);
+      if (!a && !f) {
+        if (!localStorage.getItem(HOWTO_KEY)) setTimeout(() => { if (alive) openHowto(); }, 300);
+        else if (!localStorage.getItem(NEWS_KEY)) {
+          localStorage.setItem(NEWS_KEY, '1');
+          setTimeout(() => { if (alive) showNews(); }, 400);
+        }
+      }
     } catch { /* noop */ }
 
     return { unmount() { alive = false; stopAnim(); sc.dispose(); } };

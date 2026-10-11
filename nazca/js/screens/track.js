@@ -40,6 +40,7 @@ export function debugOdai() {
 }
 
 const GUIDE_KEY = 'nazca.guide';
+const OMAKASE_USED_KEY = 'nazca.omakaseUsed';   // おまかせ GUIDE を一度でも使ったか（NEW の表示用）
 const GUIDE_FRAC = 0.62;     // 配置中のお題の大きさ（画面の短辺に対する比）
 const RAD = Math.PI / 180;
 
@@ -161,10 +162,16 @@ export default {
     let guidePlacement = null;       // 固定したときの地図表示 { center, zoom, bearing, rot }
     let guideRoute = null;           // おまかせ GUIDE の道順（[lat, lng] の線の配列。描く順）
     const omakaseOn = !!tpl && (AUTO_GUIDE === true || (AUTO_GUIDE === 'debug' && debug));
+    // まだ一度も使っていなければ GUIDE ボタンと「おまかせ」に NEW を付ける
+    let omakaseNew = false;
+    try { omakaseNew = omakaseOn && !localStorage.getItem(OMAKASE_USED_KEY); } catch { /* noop */ }
     const tplNorm = tpl ? normalizeTemplate(tpl.strokes) : null;
     const tplLen = tplNorm ? totalLength(tplNorm) : 0;
     const C_GUIDE = pack(PAL.pink); const C_RET = pack(PAL.ink);
-    const guideBtn = h('button', { type: 'button', class: 'tool-btn tool-guide', html: `${icon('guide')} GUIDE` });
+    const guideBtn = h('button', { type: 'button', class: `tool-btn tool-guide${omakaseNew ? ' has-new' : ''}`, html: `${icon('guide')} GUIDE` });
+    const omakaseBtn = omakaseOn
+      ? btn(`${icon('star')} おまかせ（まわりの道に合わせる）${omakaseNew ? '<span class="new-tag">NEW</span>' : ''}`, () => startOmakase(), 'btn-sm btn-mint btn-block')
+      : null;
     const gpSize = h('b', {}); const gpLen = h('span', {}); const gpRot = h('span', {});
     const guidePanel = h('div', { class: 'guide-panel frame hidden' },
       h('div', { class: 'gp-info' }, h('span', { class: 'gp-title' }, 'GUIDE'), gpSize, gpLen, gpRot),
@@ -173,7 +180,7 @@ export default {
         holdBtn('+1°', () => { guideRot = normDeg(guideRot + 1); map.requestRender(); }, 'btn-sm btn-ghost', { 'aria-label': '右に1°回す' }),
         btn('OFF', () => guideOff(), 'btn-sm btn-ghost'),
         btn('SET', () => guideSet(), 'btn-sm btn-pink')),
-      omakaseOn ? h('div', { class: 'gp-auto' }, btn(`${icon('star')} おまかせ（まわりの道に合わせる）`, () => startOmakase(), 'btn-sm btn-mint btn-block')) : null,
+      omakaseBtn ? h('div', { class: 'gp-auto' }, omakaseBtn) : null,
       h('p', { class: 'gp-hint' }, '地図を動かして位置、ピンチで大きさ、2本指で向き'));
 
     const guideScreenPts = () => {
@@ -241,6 +248,13 @@ export default {
     // ---- おまかせ GUIDE ----
     const startOmakase = () => {
       sfx.select();
+      if (omakaseNew) {
+        omakaseNew = false;
+        try { localStorage.setItem(OMAKASE_USED_KEY, '1'); } catch { /* noop */ }
+        guideBtn.classList.remove('has-new');
+        const tag = omakaseBtn.querySelector('.new-tag');
+        if (tag) tag.remove();
+      }
       const fix = tracker.lastFix && Date.now() - tracker.lastFix.t < 120000 ? tracker.lastFix : null;
       const me = fix ? { lat: fix.lat, lng: fix.lng } : { ...map.center };
       if (closeOmakase) closeOmakase();

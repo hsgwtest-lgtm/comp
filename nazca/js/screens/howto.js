@@ -1,7 +1,7 @@
 // HOW TO PLAY（遊び方ガイド）#/howto
 // ・17 ページ（はじめに / きほん / もっと楽しむ / コツ）。ページごとにドット絵のアニメーション
 //   （160×120 の PixelBuffer を CSS で拡大）と、ボタンやバッジなど画面の部品を模した表示を重ねる
-// ・初回起動時はタイトル画面から自動で開く。タイトルの HOW TO PLAY / ? とホーム画面のショートカットからも開ける
+// ・初回起動時はタイトル画面から自動で開く。タイトル画面の右上の ？ とホーム画面のショートカットからも開ける
 // ・SKIP でいつでも閉じられる。もくじから好きなページへ。スワイプ・← → キーでも移動
 // ・端末が「動きを減らす」設定のときは、ページごとに決めた 1 コマ（S.still）を止めて表示する
 import { h, btn, scope, modal, closeAllModals, toast, esc } from '../ui.js';
@@ -19,7 +19,11 @@ export const HOWTO_KEY = 'nazca.seenHowto';
 // タイトル画面から開いたとき、閉じるときは履歴を 1 つ戻す（スマホの「戻る」で再びガイドが開かないように）。
 // ホーム画面のショートカットや URL から直接開いたときは、履歴を置き換えてタイトルへ。
 let fromTitle = false;
-export function openHowto() { fromTitle = true; navigate('howto'); }
+let startAt = null;   // 開くページ（SLIDES の id）
+export function openHowto(page = null) { fromTitle = true; startAt = page; navigate('howto'); }
+
+// 新しい機能のお知らせ（一度だけ）。遊び方ガイドを開けば見たことにする
+export const NEWS_KEY = 'nazca.news.omakase';
 const W = 160; const H = 120;
 const MPP = 5;            // アニメーションの地図: 1 ドット = 5m（距離・大きさの表示用）
 const WALK_MPS = 1.3;     // 時間の表示用（歩く速さ）
@@ -186,6 +190,56 @@ function drawCity(buf, ox = 0, oy = 0) {
   for (let gy = gy0; gy * PY - oy < buf.h; gy++) buf.rect(0, Math.round(gy * PY - oy), buf.w, R, ((gy % 3) + 3) % 3 === 0 ? C.road2 : C.road);
 }
 
+// ---- おまかせ GUIDE のページ用 -----------------------------------------------
+/** 15px の碁盤目の街（dim = 探している間の暗い地図） */
+function drawTown(buf, dim) {
+  const col = dim
+    ? { city: pack('#15112f'), bldg: pack('#221c4a'), park: pack('#12302a'), road: pack('#5e5440'), road2: pack('#6f6347') }
+    : { city: C.city, bldg: C.bldg, park: C.park, road: C.road, road2: C.road2 };
+  buf.clear(col.city);
+  for (let gy = -1; gy < 9; gy++) {
+    for (let gx = -1; gx < 11; gx++) {
+      const X = 8 + gx * 15 + 2; const Y = 8 + gy * 15 + 2; const k = hash2(gx + 40, gy + 7) % 100;
+      if (k < 12) buf.rect(X, Y, 13, 13, col.park);
+      else { buf.rect(X + 1, Y + 1, 5, 5, col.bldg); buf.rect(X + 7, Y + 1, 5, 5, col.bldg); buf.rect(X + 1, Y + 7, 11, 5, col.bldg); }
+    }
+  }
+  for (let gx = -1; gx < 12; gx++) buf.rect(8 + gx * 15, 0, 2, buf.h, ((gx % 4) + 4) % 4 === 1 ? col.road2 : col.road);
+  for (let gy = -1; gy < 9; gy++) buf.rect(0, 8 + gy * 15, buf.w, 2, ((gy % 3) + 3) % 3 === 1 ? col.road2 : col.road);
+}
+function meDot(buf, [x, y], t) {
+  const blink = Math.floor(t / 400) % 2 === 0;
+  buf.sprite(Math.round(x) - 3, Math.round(y) - 3, ME, { '#': blink ? C.ink : C.dark, o: C.pink });
+}
+function cutPolyline(pts, d) { return cut(pts, d).pts; }
+/** おすすめの道順（アプリと同じ: 白い点線・影・進む向きの矢印） */
+function routeLine(buf, strokes) {
+  for (const pts of strokes) {
+    buf.polyline(shift(pts), C.sh, 1, [2, 2]);
+    buf.polyline(pts, C.ink, 1, [2, 2]);
+    let acc = 12;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1]; const [bx, by] = pts[i]; const L = Math.hypot(bx - ax, by - ay);
+      if (L < 1e-6) continue;
+      const ux = (bx - ax) / L; const uy = (by - ay) / L;
+      for (let d = 24 - acc; d <= L; d += 24) {
+        const px = ax + ux * d; const py = ay + uy * d;
+        for (const [c, th] of [[C.sh, 2], [C.ink, 1]]) {
+          buf.line(px - ux * 3 - uy * 2.5, py - uy * 3 + ux * 2.5, px, py, c, th);
+          buf.line(px - ux * 3 + uy * 2.5, py - uy * 3 - ux * 2.5, px, py, c, th);
+        }
+      }
+      acc = (acc + L) % 24;
+    }
+  }
+}
+const DIGIT1 = ['.#.', '##.', '.#.', '.#.', '###'];
+function numberBox(buf, [x, y]) {
+  const X = Math.round(x) - 2; const Y = Math.round(y) - 3;
+  buf.rect(X - 1, Y - 1, 7, 9, C.sh); buf.rect(X, Y, 5, 7, C.gold);
+  buf.sprite(X + 1, Y + 1, DIGIT1, { '#': C.sh });
+}
+
 /** 方眼紙（結果画面・スケッチと同じ） */
 function gridBg(buf) {
   buf.clear(C.bg2);
@@ -274,7 +328,7 @@ const SLIDES = [
     ch: 0,
     title: 'できること',
     body: ['タイトル画面のメニューから遊びます。まずは DAILY CHALLENGE（毎日のお題）から始めてみましょう。'],
-    points: [['book', 'この説明は、タイトル画面の HOW TO PLAY からいつでも見られます。']],
+    points: [['help', 'この説明は、タイトル画面の右上の ？ からいつでも見られます。']],
     anim(S) {
       const items = [
         ['star', 'DAILY CHALLENGE', '毎日のお題を歩いて描いて、PTS を競う', 'sand'],
@@ -338,6 +392,7 @@ const SLIDES = [
     points: [
       ['map', '場所・大きさ・向きは自由。描きやすい道や公園に合わせよう。'],
       ['guide', 'SET すると、1 周のおおよその距離がわかります。'],
+      ['star', '迷ったら「おまかせ」。道に合う置き方を自動で探せます（次のページ）。'],
     ],
     anim(S) {
       const hint = S.ov('', 80, 4, { cls: 'ht-cap', a: 't' });
@@ -363,6 +418,78 @@ const SLIDES = [
         hint.set(T < 2200 ? '地図を動かして、場所を決める' : T < 4200 ? 'ピンチで、大きさを決める' : T < 6000 ? '2 本指で回して、向きを決める' : 'SET で決定！');
         setBtn.cls('press', T > 6000 && T < 6400).show(T > 5800);
         dist.show(set).set(`1周 約 ${fmtKm(strokesLen(g) * MPP)}`);
+      };
+    },
+  },
+  {
+    id: 'omakase',
+    ch: 1,
+    title: 'おまかせ GUIDE で、道に合わせて置く',
+    body: ['GUIDE を開いて「おまかせ」を押すと、現在地のまわり（半径 600m）の道を調べて、お題をきれいに描ける置き方と道順を探します。案を選ぶと GUIDE が置かれ、道順が地図に出ます。'],
+    points: [
+      ['star', '案ごとに、予想スコア・大きさ・歩く距離がわかります。'],
+      ['guide', '白い点線を 1 → 2 … の順に、矢印の向きに歩こう。'],
+      ['walk', '道順は目安です。私道や通れない道は避けてね。'],
+    ],
+    anim(S) {
+      // 15px の碁盤目の街。ドットのハートがちょうど道に乗る（u, v → 23 + 15u, 23 + 15v）
+      const raw = templateById('heart').strokes[0];
+      const k0 = raw.findIndex(([u, v]) => u === 0 && v === 3);      // 現在地にいちばん近い角から歩き始める
+      const loopPts = [...raw.slice(k0, -1), ...raw.slice(0, k0), raw[k0]].map(([u, v]) => [23 + 15 * u, 23 + 15 * v]);
+      const route = [loopPts]; const rLen = pathLen(loopPts);
+      const guideH = place(HEART, 83, 68, 118, 4);                   // お題（GUIDE）は道から少しずれている
+      const me = [11, 70];
+      const cands = [[62, 52, 70, 28], [104, 74, 64, -34], [70, 66, 96, 14], [92, 58, 86, -10], [80, 62, 110, 6]];
+      const cap = S.ov('', 80, 4, { cls: 'ht-cap', a: 't' });
+      const omBtn = S.ov(`${icon('star')} おまかせ`, 80, 113, { cls: 'ht-fbtn ht-c-mint', a: 'b' });
+      const prog = S.ov('', 80, 113, { cls: 'ht-chip', a: 'b' });
+      const card = S.ov('<div class="h">おすすめ</div><b>予想 96% S</b><span>大きさ 300m ・ 描く道のり 約1.2km</span>', 80, 52, { cls: 'ht-card', a: 'c' });
+      const pick = S.ov(`${icon('flag')} これにする`, 80, 113, { cls: 'ht-fbtn ht-c-pink', a: 'b' });
+      const rec = S.ov('● REC', 154, 5, { cls: 'ht-badge ht-rec', a: 'tr' });
+      const A = 1400; const B = 5000; const Cc = 6800; const speed = 0.06; const loop = Cc + rLen / speed + 1600;
+      S.still = Cc + (rLen * 0.55) / speed;
+      return (t) => {
+        const T = t % loop; const b = S.buf;
+        if (T < A) {
+          drawTown(b, false);
+          meDot(b, me, t);
+          cap.set('GUIDE の「おまかせ」を押すと');
+        } else if (T < B) {
+          drawTown(b, true);
+          // レーダーのように回る線と、試している置き方
+          const a = t / 650;
+          const sweep = [C.mint, pack('#2cc29c'), pack('#219275'), pack('#176353')];
+          for (let j = sweep.length - 1; j >= 0; j--) { const q = a - j * 0.1; b.line(me[0], me[1], me[0] + Math.cos(q) * 160, me[1] + Math.sin(q) * 160, sweep[j]); }
+          const n = Math.min(cands.length, Math.floor((T - A) / 700) + 1);
+          for (let j = Math.max(0, n - 3); j < n; j++) {
+            const [cx, cy, sz, dg] = cands[j];
+            for (const st of place(HEART, cx, cy, sz, dg)) b.polyline(st, j === n - 1 ? C.pink : pack('#7a3158'), 1, [2, 1]);
+          }
+          meDot(b, me, t);
+          cap.set('半径 600m の道から、置き方を探しています');
+          prog.set(`SCANNING ${Math.min(99, Math.round(((T - A) / (B - A)) * 100))}%`);
+        } else if (T < Cc) {
+          drawTown(b, true);
+          b.polyline(loopPts, Math.floor(T / 250) % 2 ? C.gold : C.mint, 1);
+          meDot(b, me, t);
+        } else {
+          drawTown(b, false);
+          guide(b, guideH);
+          const d = Math.max(0, (T - Cc) * speed);
+          routeLine(b, route);
+          const walked = cutPolyline(loopPts, Math.min(d, rLen));
+          if (walked.length > 1) { b.polyline(shift(walked), C.sh, 2); b.polyline(walked, C.mint, 2); }
+          numberBox(b, loopPts[0]);
+          if (d < rLen) walker(b, walked[walked.length - 1], t); else meDot(b, loopPts[0], t);
+          cap.set('白い点線を、矢印の向きに歩くだけ！');
+        }
+        // 部品の出し入れは毎コマ決める（動きを減らす設定では途中の 1 コマだけを描くため）
+        cap.show(T < B || T >= Cc);
+        omBtn.show(T < A).cls('press', T > 900 && T < 1300);
+        prog.show(T >= A && T < B);
+        card.show(T >= B && T < Cc);
+        pick.show(T >= B && T < Cc).cls('press', T > 6300 && T < 6700);
+        rec.show(T >= Cc && (T - Cc) * speed < rLen);
       };
     },
   },
@@ -759,7 +886,7 @@ const SLIDES = [
   {
     ch: 3,
     title: 'さあ、歩いて描こう！',
-    body: ['まずは今日のお題から。この説明は、タイトル画面の HOW TO PLAY からいつでも見られます。'],
+    body: ['まずは今日のお題から。この説明は、タイトル画面の右上の ？ からいつでも見られます。'],
     points: [],
     final: true,
     anim(S) {
@@ -835,9 +962,10 @@ export default {
   mount(el) {
     const sc = scope();
     el.className = 'scr scr-howto';
-    try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* noop */ }
+    try { localStorage.setItem(HOWTO_KEY, '1'); localStorage.setItem(NEWS_KEY, '1'); } catch { /* noop */ }
     const backable = fromTitle; fromTitle = false;
-    let idx = 0;
+    let idx = Math.max(0, SLIDES.findIndex((sl) => startAt && sl.id === startAt));
+    startAt = null;
 
     let closing = false;   // 連打・キーの押しっぱなしで 2 回戻らないように
     const close = () => {
@@ -850,7 +978,7 @@ export default {
       const id = setTimeout(() => navigate('', { replace: true }), 600);
       sc.add(() => clearTimeout(id));
     };
-    const skipBtn = btn('SKIP', () => { toast('遊び方は、タイトル画面の HOW TO PLAY からいつでも見られます', 2600); close(); }, 'btn-sm btn-ghost ht-skip', { 'aria-label': '遊び方の説明をとばす' });
+    const skipBtn = btn('SKIP', () => { toast('遊び方は、タイトル画面の右上の ？ からいつでも見られます', 2600); close(); }, 'btn-sm btn-ghost ht-skip', { 'aria-label': '遊び方の説明をとばす' });
     const tocBtn = h('button', { type: 'button', class: 'icon-btn ht-toc', 'aria-label': 'もくじ', html: icon('list') });
     tocBtn.addEventListener('click', () => { sfx.blip(); openToc(); });
     const chapEl = h('div', { class: 'ht-chap' });

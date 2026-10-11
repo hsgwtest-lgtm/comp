@@ -31,7 +31,7 @@ export const FIREBASE_CONFIG = {
 // gstatic CDN から読み込む Firebase JS SDK のバージョン
 export const FIREBASE_SDK_VERSION = '12.19.0';
 
-export const APP_VERSION = '2.5.0';
+export const APP_VERSION = '2.6.0';
 
 // デイリーチャレンジの切替時刻（日本時間）
 export const TZ_OFFSET_MIN = 9 * 60;   // JST = UTC+9
@@ -53,7 +53,7 @@ export const GPS = {
 
 // おまかせ GUIDE（まわりの道に合わせてお題を自動で置き、道順を出す）
 //   false = 使わない / 'debug' = URL に ?debug=1 を付けたときだけ / true = 全員
-export const AUTO_GUIDE = 'debug';
+export const AUTO_GUIDE = true;
 
 // デイリーランキングに参加できる最低歩行距離 (m)
 export const DAILY_MIN_DISTANCE = 100;
