@@ -36,6 +36,23 @@ function makeTiles(color) {
 let fails = 0;
 const check = (name, cond, extra = '') => { console.log(`${cond ? 'ok  ' : 'NG  '} ${name}${extra ? `  ${extra}` : ''}`); if (!cond) fails++; };
 
+/** 道順の線を 1 マスおきに見て、道のマス（となりのマスまで）から外れている点の数 */
+function offRoad(res, o) {
+  let off = 0;
+  for (const st of o.routes) {
+    for (let i = 1; i < st.length; i++) {
+      const [ax, ay] = st[i - 1]; const [bx, by] = st[i]; const k = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 2));
+      for (let j = 0; j <= k; j++) {
+        const x = Math.floor(ax + ((bx - ax) * j) / k); const y = Math.floor(ay + ((by - ay) * j) / k);
+        let near = false;
+        for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (res.road[(y + dy) * res.W + x + dx]) { near = true; break; }
+        if (!near) off++;
+      }
+    }
+  }
+  return off;
+}
+
 // 範囲
 const tiles = makeTiles(city);
 check('tiles cover the circle', tiles.length >= 4 && fr.W * fr.cellM >= 2 * AG_RADIUS, `${tiles.length} tiles, ${Math.round(fr.W * fr.cellM)}m`);
@@ -65,7 +82,7 @@ for (const id of ['house', 'heart', 'smile-09', 'umbrella']) {
   let far = 0;
   for (const o of res.options) for (const s of o.routes) for (const [x, y] of s) if (Math.hypot(x - fr.meX, y - fr.meY) * fr.cellM > AG_RADIUS + 40) far++;
   check(`${id}: inside the radius`, far === 0, `${far} points outside`);
-  check(`${id}: on roads`, res.options.every((o) => o.offM <= Math.max(30, 0.05 * o.drawM)), res.options.map((o) => `${o.offM}/${Math.round(o.drawM)}m`).join(' '));
+  check(`${id}: only on roads`, res.options.every((o) => o.offM === 0 && o.gaps === 0 && offRoad(res, o) === 0), res.options.map((o) => `${o.offM}m/${o.gaps}/${offRoad(res, o)}`).join(' '));
   check(`${id}: fast enough`, ms < 5000, `${ms}ms`);
   // 同じ入力なら同じ結果
   if (id === 'house') {
@@ -81,6 +98,52 @@ for (const id of ['house', 'heart', 'smile-09', 'umbrella']) {
   const d0 = Math.hypot(o.routes[0][0][0] - fr.meX, o.routes[0][0][1] - fr.meY);
   const others = o.guide.slice(1).flatMap((s) => [s[0], s[s.length - 1]]).map(([x, y]) => Math.hypot(x - fr.meX, y - fr.meY));
   check('multi-stroke: starts at the nearest stroke end', d0 <= Math.min(...others) + 8, `${Math.round(d0 * fr.cellM)}m vs ${Math.round(Math.min(...others) * fr.cellM)}m`);
+}
+// 田畑（道のない大きな区画）がある街: 道順は田畑を横切らない。現在地から道でつながっていない道（田畑の中の島）は使わない
+{
+  const FX0 = -380; const FX1 = -40; const FY0 = -170; const FY1 = 170;        // 田畑（m、現在地から）
+  const rural = (gx, gy) => {
+    const x = (gx - meGX) * mpp; const y = (gy - meGY) * mpp;
+    if (x > FX0 && x < FX1 && y > FY0 && y < FY1) {
+      // 田畑の真ん中の、どこにもつながっていない四角い道（1 辺 120m・幅 6m）
+      const ix = Math.abs(x + 210); const iy = Math.abs(y);
+      if (Math.max(ix, iy) < 63 && Math.max(ix, iy) > 57) return [255, 255, 255];
+      return [242, 239, 233];
+    }
+    return city(gx, gy);
+  };
+  const rt = makeTiles(rural);
+  for (const id of ['bolt', 'heart', 'cat']) {
+    const res = await planAutoGuide({ tiles: rt, me, strokes: templateById(id).strokes });
+    const offs = res.options.map((o) => offRoad(res, o));
+    check(`field: ${id} options`, res.options.length >= 1, res.options.map((o) => `${o.size}m ${o.score}%`).join(' '));
+    check(`field: ${id} never crosses the field`, offs.every((v) => v === 0) && res.options.every((o) => o.offM === 0 && o.gaps === 0), offs.join(' '));
+    if (id === 'bolt') {
+      const ix = Math.floor(fr.meX + (-210 + 60) / fr.cellM); const iy = Math.floor(fr.meY);
+      let isl = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) isl += res.road[(iy + dy) * res.W + ix + dx];
+      check('field: unreachable island road dropped', isl === 0, `${isl} cells`);
+      let fieldRoad = 0;
+      for (let y = 0; y < res.H; y++) for (let x = 0; x < res.W; x++) {
+        const mx = (x + 0.5 - fr.meX) * fr.cellM; const my = (y + 0.5 - fr.meY) * fr.cellM;
+        if (mx > FX0 + 12 && mx < FX1 - 12 && my > FY0 + 12 && my < FY1 - 12 && res.road[y * res.W + x]) fieldRoad++;
+      }
+      check('field: no usable road inside the field', fieldRoad === 0, `${fieldRoad} cells`);
+    }
+  }
+}
+// 道がまばらな場所（200m おきの道だけ）: 遠回りになっても、道でない所は通らない
+{
+  const sparse = (gx, gy) => {
+    const x = (gx - meGX) * mpp + 37; const y = (gy - meGY) * mpp + 61;
+    return ((x % 200) + 200) % 200 < 6 || ((y % 200) + 200) % 200 < 6 ? [255, 255, 255] : [242, 239, 233];
+  };
+  const st = makeTiles(sparse);
+  for (const id of ['bolt', 'heart', 'smile-09', 'star']) {
+    const res = await planAutoGuide({ tiles: st, me, strokes: templateById(id).strokes });
+    const offs = res.options.map((o) => offRoad(res, o));
+    check(`sparse: ${id} only on roads`, res.options.length >= 1 && offs.every((v) => v === 0) && res.options.every((o) => o.offM === 0),
+      res.options.map((o, i) => `${o.size}m ${o.score}% off${offs[i]}`).join(' '));
+  }
 }
 // 道がない（地図が読めない場所）
 {

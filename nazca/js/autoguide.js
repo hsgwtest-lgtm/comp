@@ -2,6 +2,7 @@
 // ・現在地のまわり（半径 600m）の OSM タイル（ズーム 16）から歩ける道を取り出し、約 4m のマス目にする
 // ・お題を 大きさ × 向き × 位置 で総当たりし、「お題の線のすぐ近くに道があるか」で候補をしぼる
 // ・よい候補だけ、道を通る道順を A* で作り（お題の線から離れるほど重い）、採点（score.js）で予想スコアを出す
+// ・道順は道のマスだけを通る（建物・田畑・空き地などは横切らない）。使う道は現在地から歩いて行ける道だけ
 // ・閉じた線は現在地にいちばん近いところから歩き始め、線が複数あるときは近い順・近い端から描く
 // DOM を使わない（Web Worker と node のテストからも使える）
 import { scoreTrack, normalizeTemplate } from './score.js';
@@ -17,9 +18,9 @@ export const AG_CELL = CELL;
 const MARGIN_M = 80;                   // 円の外側にも少しだけ道を読む（円の端の道につなぐため）
 const RAD = Math.PI / 180;
 const EARTH = 6378137;
-const OFFROAD = 20;                    // 道ではないマスを通る重さ（地図の文字などで数 m 切れた道はつなぐ。建物は横切らない）
 const SIGMA_M = 14;                    // お題の線からこの距離離れると重さ 2 倍
-const DEV_MAX = 6;                     // 線から離れた重さの上限（1 + 6 倍）。道を外れるより遠回りを選ぶように
+const DEV_MAX = 6;                     // 線から離れた重さの上限（1 + 6 倍）
+const NEAR_M = 120;                    // m: 現在地からこの距離の中を通る道のかたまりを使う
 const SQ2 = Math.SQRT2;
 
 // ---- 座標 ------------------------------------------------------------
@@ -159,6 +160,36 @@ export function buildRoads(fr, tiles) {
   return { road, known, dt, count };
 }
 
+/**
+ * 現在地から歩いて行ける道だけを残す（道のかたまりのうち、現在地から nearCells マスの中を通るいちばん大きいもの。
+ * なければ全体でいちばん大きいもの）。残った道のマスの数を返す
+ */
+export function keepReachable(road, W, H, mx, my, nearCells) {
+  const lab = new Int32Array(W * H).fill(-1); const q = new Int32Array(W * H);
+  let near = -1; let nearSize = 0; let big = -1; let bigSize = 0;
+  const r2 = nearCells * nearCells;
+  for (let s = 0; s < W * H; s++) {
+    if (!road[s] || lab[s] >= 0) continue;
+    let head = 0; let tail = 0; q[tail++] = s; lab[s] = s; let isNear = false;
+    while (head < tail) {
+      const i = q[head++]; const x = i % W; const y = (i - x) / W;
+      if (!isNear && (x + 0.5 - mx) ** 2 + (y + 0.5 - my) ** 2 <= r2) isNear = true;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx; const yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const k = yy * W + xx;
+        if (road[k] && lab[k] < 0) { lab[k] = s; q[tail++] = k; }
+      }
+    }
+    if (tail > bigSize) { bigSize = tail; big = s; }
+    if (isNear && tail > nearSize) { nearSize = tail; near = s; }
+  }
+  const keep = near >= 0 ? near : big;
+  let count = 0;
+  for (let i = 0; i < W * H; i++) { if (road[i] && lab[i] !== keep) road[i] = 0; count += road[i]; }
+  return count;
+}
+
 // ---- お題の点 ------------------------------------------------------------
 function strokeLen(s) { let L = 0; for (let i = 1; i < s.length; i++) L += Math.hypot(s[i][0] - s[i - 1][0], s[i][1] - s[i - 1][1]); return L; }
 
@@ -243,7 +274,7 @@ function makeRouter(fr, road) {
   const g = new Float32Array(N); const stamp = new Int32Array(N); const from = new Int32Array(N); const closed = new Int32Array(N);
   let run = 0;
   const DX = [1, -1, 0, 0, 1, 1, -1, -1]; const DY = [0, 0, 1, -1, 1, -1, 1, -1]; const DL = [1, 1, 1, 1, SQ2, SQ2, SQ2, SQ2];
-  /** s → t の道順（マスの番号の配列）。dev(x, y) はお題の線からの距離（マス）。見つからなければ null */
+  /** s → t の道順（マスの番号の配列）。道のマスだけを通る。dev(x, y) はお題の線からの距離（マス）。見つからなければ null */
   return function astar(s, t, dev, { box = 40, maxExpand = 60000, sigma = 4 } = {}) {
     if (s === t) return [s];
     run++;
@@ -266,7 +297,8 @@ function makeRouter(fr, road) {
         if (xx < bx0 || xx > bx1 || yy < by0 || yy > by1) continue;
         const j = yy * W + xx;
         if (closed[j] === run) continue;
-        let w = DL[d] * (road[j] ? 1 : OFFROAD);
+        if (!road[j]) continue;
+        let w = DL[d];
         if (dev) { const e = dev(xx, yy) / sigma; w *= 1 + Math.min(DEV_MAX, e * e); }
         const ng = gi + w;
         if (stamp[j] !== run || ng < g[j]) {
@@ -385,6 +417,8 @@ const pathLen = (pts) => { let L = 0; for (let i = 1; i < pts.length; i++) L += 
 function routePlacement(ctx, p) {
   const { fr, road, dt, astar, tplStrokes, norm } = ctx;
   const { W } = fr;
+  // まず近くだけを探し、見つからなければ全体から（道のかたまりは 1 つなので、かならず見つかる）
+  const findPath = (a, b, dev, o) => astar(a, b, dev, o) || astar(a, b, dev, { ...o, box: fr.W + fr.H, maxExpand: fr.W * fr.H });
   const placed = placeStrokes(norm, fr, p);
   const ordered = orderStrokes(placed, [fr.meX, fr.meY]);
   const cellPt = (i) => { const x = i % W; return [x + 0.5, (i - x) / W + 0.5]; };
@@ -393,12 +427,12 @@ function routePlacement(ctx, p) {
   for (const st of ordered) {
     const D = densify(st, 1);
     const wp = waypointIdx(D);
-    const cells = wp.map((k) => snap(fr, road, dt, D[k][0], D[k][1]));
+    const cells = wp.map((k) => snap(fr, road, dt, D[k][0], D[k][1], Infinity));   // いちばん近い道のマス
     const path = [];
     let prev = -1; let prevK = 0;
     for (let n = 0; n < wp.length; n++) {
-      let c = cells[n];
-      if (c < 0) { const x = Math.min(W - 1, Math.max(0, Math.floor(D[wp[n]][0]))); const y = Math.min(fr.H - 1, Math.max(0, Math.floor(D[wp[n]][1]))); c = y * W + x; }
+      const c = cells[n];
+      if (c < 0) { gaps++; continue; }
       if (prev < 0) { path.push(c); prev = c; prevK = wp[n]; continue; }
       const seg = D.slice(prevK, wp[n] + 1);
       const dev = (x, y) => {
@@ -406,14 +440,16 @@ function routePlacement(ctx, p) {
         for (let q = 0; q < seg.length; q += 1) { const dd = (seg[q][0] - X) ** 2 + (seg[q][1] - Y) ** 2; if (dd < m) m = dd; }
         return Math.sqrt(m);
       };
-      const r = astar(prev, c, dev, { sigma, box: 30 });
-      if (r) for (let q = 1; q < r.length; q++) path.push(r[q]);
-      else { gaps++; path.push(c); }
+      const r = findPath(prev, c, dev, { sigma, box: 30 });
+      if (!r) { gaps++; continue; }                 // 道でつながらない通過点は飛ばす
+      for (let q = 1; q < r.length; q++) path.push(r[q]);
       prev = c; prevK = wp[n];
     }
+    if (!path.length) continue;
     for (const c of path) if (!road[c]) off++;
     routes.push(simplifyPath(path.map(cellPt)));
   }
+  if (!routes.length) return { ...p, score: 0, gaps, offM: 0, routes, guide: ordered, drawM: 0, moveM: 0, approachM: 0 };
   // 採点（マス → m。y は南向きのままでお題と同じ向き）
   const meters = routes.map((s) => s.map(([x, y]) => [x * fr.cellM, y * fr.cellM]));
   let score = 0;
@@ -425,13 +461,13 @@ function routePlacement(ctx, p) {
   for (let k = 1; k < routes.length; k++) {
     const a = routes[k - 1][routes[k - 1].length - 1]; const b = routes[k][0];
     const ca = snap(fr, road, dt, a[0], a[1], 20); const cb = snap(fr, road, dt, b[0], b[1], 20);
-    const r = ca >= 0 && cb >= 0 ? astar(ca, cb, null, { box: 60 }) : null;
+    const r = ca >= 0 && cb >= 0 ? findPath(ca, cb, null, { box: 60 }) : null;
     moveM += (r ? pathLen(r.map(cellPt)) : Math.hypot(b[0] - a[0], b[1] - a[1]) * 1.3) * fr.cellM;
   }
   // 現在地からスタートまで
   const s0 = routes[0][0];
-  const cm = snap(fr, road, dt, fr.meX, fr.meY, 30); const cs = snap(fr, road, dt, s0[0], s0[1], 20);
-  const ra = cm >= 0 && cs >= 0 ? astar(cm, cs, null, { box: 80, maxExpand: 120000 }) : null;
+  const cm = snap(fr, road, dt, fr.meX, fr.meY, Infinity); const cs = snap(fr, road, dt, s0[0], s0[1], 20);
+  const ra = cm >= 0 && cs >= 0 ? findPath(cm, cs, null, { box: 80, maxExpand: 120000 }) : null;
   const approachM = (ra ? pathLen(ra.map(cellPt)) : Math.hypot(s0[0] - fr.meX, s0[1] - fr.meY) * 1.3) * fr.cellM;
   return { ...p, score, gaps, offM: Math.round(off * fr.cellM), routes, guide: ordered, drawM, moveM, approachM };
 }
@@ -489,7 +525,9 @@ export async function planAutoGuide(input, onProgress = () => {}, opts = {}) {
   const radius = input.radius || AG_RADIUS; const sizes = input.sizes || AG_SIZES;
   const fr = gridFrame(input.me, radius, input.tiles.length ? input.tiles[0].z : AG_ZOOM);
   const { W, H } = fr;
-  const { road, dt, count } = buildRoads(fr, input.tiles);
+  const { road } = buildRoads(fr, input.tiles);
+  const count = keepReachable(road, W, H, fr.meX, fr.meY, NEAR_M / fr.cellM);
+  const dt = distanceField(road, W, H);
   onProgress({ stage: 'roads', pct: 1, W, H, road, meX: fr.meX, meY: fr.meY, roadCells: count });
   if (tick) await tick();
   if (count < 200) return { fr, W, H, road, options: [], reason: 'noroads' };
@@ -552,10 +590,11 @@ export async function planAutoGuide(input, onProgress = () => {}, opts = {}) {
   for (let k = 0; k < pick.length; k++) {
     if (cancelled()) return null;
     const r = routePlacement(ctx, pick[k]);
-    routed.push(r);
+    if (r.routes.length) routed.push(r);
     onProgress({ stage: 'route', pct: (k + 1) / pick.length, guide: r.guide, routes: r.routes, score: r.score });
     if (tick) await tick();
   }
+  if (!routed.length) return { fr, W, H, road, options: [], reason: 'nospace' };
   // 候補を 3 つまで: まず大きさごとのいちばん（歩く距離を選べるように）。点が低すぎる大きさは外し、
   // 足りなければ、ほかの場所の候補で埋める
   routed.sort((a, b) => b.score - a.score || a.drawM - b.drawM);
